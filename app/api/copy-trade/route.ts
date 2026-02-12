@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getConfig, getState, setState } from "@/lib/kv";
+import { getConfig, getState, setState, appendActivity } from "@/lib/kv";
 import { runCopyTrade } from "@/lib/copy-trade";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -43,6 +43,9 @@ async function runCopyTradeHandler() {
       lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
       lastError: result.error,
     });
+    if (result.copiedTrades?.length) {
+      await appendActivity(result.copiedTrades);
+    }
 
     return NextResponse.json({
       ok: true,

@@ -34,6 +34,7 @@ export interface TradeActivity {
   price: number;
   size: number;
   title: string;
+  outcome?: string;
 }
 
 export async function getTargetActivity(
@@ -71,12 +72,23 @@ export function computeBetSize(
   return amount >= minUsd ? Math.max(amount, minUsd) : 0;
 }
 
+export interface CopiedTrade {
+  title: string;
+  outcome: string;
+  side: string;
+  amountUsd: number;
+  price: number;
+  asset: string;
+  timestamp: number;
+}
+
 export interface CopyTradeResult {
   copied: number;
   failed: number;
   error?: string;
   lastTimestamp?: number;
   copiedKeys: string[];
+  copiedTrades: CopiedTrade[];
 }
 
 export async function runCopyTrade(
@@ -87,7 +99,7 @@ export async function runCopyTrade(
   config: { minPercent: number; maxPercent: number; minBetUsd: number },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<CopyTradeResult> {
-  const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [] };
+  const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [], copiedTrades: [] };
 
   const signer = new Wallet(privateKey);
   const rawClient = new ClobClient(CLOB_HOST, CHAIN_ID, signer);
@@ -167,6 +179,15 @@ export async function runCopyTrade(
         copiedSet.add(key);
         lastTimestamp = Math.max(lastTimestamp ?? 0, ts);
         result.copied++;
+        result.copiedTrades.push({
+          title: act.title ?? "Unknown",
+          outcome: act.outcome ?? (sideStr === "BUY" ? "Yes" : "No"),
+          side: sideStr,
+          amountUsd: betUsd,
+          price,
+          asset,
+          timestamp: Date.now(),
+        });
       } else {
         result.failed++;
       }
@@ -188,4 +209,43 @@ export async function runCopyTrade(
   result.lastTimestamp = lastTimestamp;
   result.copiedKeys = Array.from(copiedSet);
   return result;
+}
+
+export async function sellPosition(
+  privateKey: string,
+  myAddress: string,
+  signatureType: number,
+  asset: string,
+  sizeShares: number,
+  price: number
+): Promise<{ success: boolean; error?: string }> {
+  const signer = new Wallet(privateKey);
+  const rawClient = new ClobClient(CLOB_HOST, CHAIN_ID, signer);
+  const creds = await rawClient.createOrDeriveApiKey();
+  const client = new ClobClient(
+    CLOB_HOST,
+    CHAIN_ID,
+    signer,
+    creds,
+    signatureType,
+    myAddress
+  );
+
+  try {
+    const resp = await client.createAndPostMarketOrder(
+      {
+        tokenID: asset,
+        amount: sizeShares,
+        side: Side.SELL,
+        price: Math.max(0.01, Math.min(0.99, price)),
+        orderType: OrderType.FOK,
+      },
+      undefined,
+      OrderType.FOK
+    );
+    return { success: !!resp?.success, error: resp?.errorMsg };
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    return { success: false, error: err };
+  }
 }

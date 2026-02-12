@@ -2,6 +2,7 @@ import { kv } from "@vercel/kv";
 
 const CONFIG_KEY = "copy_trader_config";
 const STATE_KEY = "copy_trader_state";
+const ACTIVITY_KEY = "copy_trader_activity";
 
 export interface CopyTraderConfig {
   enabled: boolean;
@@ -16,6 +17,15 @@ export interface CopyTraderState {
   lastRunAt?: number;
   lastCopiedAt?: number;
   lastError?: string;
+}
+
+export interface RecentActivity {
+  title: string;
+  outcome: string;
+  side: string;
+  amountUsd: number;
+  price: number;
+  timestamp: number;
 }
 
 const DEFAULT_CONFIG: CopyTraderConfig = {
@@ -48,4 +58,16 @@ export async function setState(state: Partial<CopyTraderState>): Promise<void> {
   const current = await getState();
   const updated = { ...current, ...state };
   await kv.set(STATE_KEY, updated);
+}
+
+export async function getRecentActivity(): Promise<RecentActivity[]> {
+  const a = await kv.get<RecentActivity[]>(ACTIVITY_KEY);
+  return Array.isArray(a) ? a : [];
+}
+
+export async function appendActivity(trades: RecentActivity[]): Promise<void> {
+  if (trades.length === 0) return;
+  const current = await getRecentActivity();
+  const updated = [...trades, ...current].slice(0, 50);
+  await kv.set(ACTIVITY_KEY, updated);
 }
