@@ -6,6 +6,9 @@ const DATA_API = "https://data-api.polymarket.com";
 const CLOB_HOST = "https://clob.polymarket.com";
 const CHAIN_ID = 137;
 
+/** Polymarket requires minimum $1 for market orders */
+const POLYMARKET_MIN_ORDER_USD = 1;
+
 export async function getCashBalance(address: string): Promise<number> {
   const res = await fetch(
     `${DATA_API}/v1/accounting/snapshot?user=${encodeURIComponent(address)}`
@@ -151,13 +154,14 @@ export async function runCopyTrade(
 
     // Target's bet in USD: use usdcSize if available, else size * price
     const targetBetUsd = act.usdcSize ?? (act.size ?? 0) * price;
-    const betUsd = computeBetSizeFromTarget(
+    let betUsd = computeBetSizeFromTarget(
       targetBetUsd,
       config.copyPercent,
       config.maxBetUsd,
       config.minBetUsd
     );
     if (betUsd < config.minBetUsd) continue;
+    if (betUsd < POLYMARKET_MIN_ORDER_USD) continue; // Polymarket rejects orders < $1
 
     const side = sideStr === "BUY" ? Side.BUY : Side.SELL;
 

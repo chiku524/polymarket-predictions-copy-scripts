@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 
 const PAGE_SIZE = 10;
 const FETCH_INTERVAL_MS = 15000;
-const CONFIG_COOLDOWN_MS = 20000;
+const CONFIG_COOLDOWN_MS = 35000;
 const API_TIMEOUT_MS = 90000;
 
 async function fetchWithTimeout(url: string, opts: RequestInit = {}): Promise<Response> {
@@ -87,6 +87,7 @@ export default function Home() {
   const [activePage, setActivePage] = useState(0);
   const [resolvedPage, setResolvedPage] = useState(0);
   const configUpdatedAtRef = useRef<number>(0);
+  const configRef = useRef<Config | null>(null);
 
   const fetchAll = useCallback(async (forceConfig = false) => {
     try {
@@ -100,14 +101,15 @@ export default function Home() {
       const statusData = await statusRes.json();
       const positionsData = await positionsRes.json();
       setStatus((prev) => {
-        if (!prev) return statusData;
-        const inCooldown = Date.now() - configUpdatedAtRef.current < CONFIG_COOLDOWN_MS;
-        if (inCooldown && !forceConfig) {
-          return {
-            ...statusData,
-            config: prev.config,
-          };
+        if (!prev) {
+          if (statusData.config) configRef.current = statusData.config;
+          return statusData;
         }
+        const inCooldown = Date.now() - configUpdatedAtRef.current < CONFIG_COOLDOWN_MS;
+        if (inCooldown && !forceConfig && configRef.current) {
+          return { ...statusData, config: configRef.current };
+        }
+        if (statusData.config) configRef.current = statusData.config;
         return statusData;
       });
       setActivePositions(positionsData.active ?? []);
@@ -131,8 +133,10 @@ export default function Home() {
   const updateConfig = useCallback(async (updates: Partial<Config>, optimistic?: boolean) => {
     if (!status) return;
     if (optimistic && "enabled" in updates) {
+      const nextConfig = { ...status.config, ...updates };
+      configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
-      setStatus((s) => (s ? { ...s, config: { ...s.config, ...updates } } : null));
+      setStatus((s) => (s ? { ...s, config: nextConfig } : null));
     }
     setSaving(true);
     setError(null);
@@ -145,11 +149,14 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      configRef.current = data;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
     } catch (e) {
       if (optimistic && "enabled" in updates) {
-        setStatus((s) => (s ? { ...s, config: { ...s.config, enabled: !updates.enabled } } : null));
+        const revertedConfig = { ...status.config, enabled: !updates.enabled };
+        configRef.current = revertedConfig;
+        setStatus((s) => (s ? { ...s, config: revertedConfig } : null));
       }
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -235,13 +242,13 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
+      const nextConfig = { ...(status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0 }), [field]: clamped };
+      configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
-      setStatus((s) =>
-        s ? { ...s, config: { ...s.config, [field]: clamped } } : null
-      );
+      setStatus((s) => (s ? { ...s, config: nextConfig } : null));
       debouncedUpdateConfig({ [field]: clamped });
     },
-    [debouncedUpdateConfig]
+    [debouncedUpdateConfig, status?.config]
   );
 
   if (loading) {
@@ -378,21 +385,22 @@ export default function Home() {
               <p className="text-xs text-zinc-500 mb-1">Max bet (USDC)</p>
               <input
                 type="number"
-                min={0.5}
+                min={1}
                 max={100}
-                step={0.5}
+                step="any"
                 value={cfg.maxBetUsd}
                 onChange={(e) =>
                   handleNumericConfigChange(
                     "maxBetUsd",
                     parseFloat(e.target.value) || 3,
-                    0.5,
+                    1,
                     100
                   )
                 }
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
+              <p className="text-xs text-zinc-500 mt-0.5">Polymarket min $1 per order</p>
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Min bet (USDC)</p>
