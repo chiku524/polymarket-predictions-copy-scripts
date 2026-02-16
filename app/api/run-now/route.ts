@@ -42,6 +42,7 @@ export async function POST() {
         maxBetUsd: config.maxBetUsd,
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
+        floorToPolymarketMin: config.floorToPolymarketMin !== false,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );

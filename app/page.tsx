@@ -40,6 +40,7 @@ interface Config {
   maxBetUsd: number;
   minBetUsd: number;
   stopLossBalance: number;
+  floorToPolymarketMin?: boolean;
 }
 
 interface Status {
@@ -273,7 +274,7 @@ export default function Home() {
     );
   }
 
-  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0 };
+  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0, floorToPolymarketMin: true };
   const activity = status?.recentActivity ?? [];
 
   return (
@@ -402,6 +403,30 @@ export default function Home() {
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
               <p className="text-xs text-zinc-500 mt-0.5">Polymarket min $1 per order</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                role="switch"
+                aria-checked={cfg.floorToPolymarketMin !== false}
+                onClick={() => updateConfig({ floorToPolymarketMin: !(cfg.floorToPolymarketMin !== false) })}
+                disabled={saving}
+                className={`
+                  relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                  ${cfg.floorToPolymarketMin !== false ? "bg-emerald-500" : "bg-zinc-700"}
+                  ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                `}
+              >
+                <span
+                  className={`
+                    absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                    ${cfg.floorToPolymarketMin !== false ? "left-6 translate-x-[-2px]" : "left-1"}
+                  `}
+                />
+              </button>
+              <div>
+                <p className="text-xs text-zinc-500">Floor to $1</p>
+                <p className="text-xs text-zinc-600">Round small bets up to $1 to copy more trades</p>
+              </div>
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Min bet (USDC)</p>

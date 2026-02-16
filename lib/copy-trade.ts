@@ -100,7 +100,7 @@ export async function runCopyTrade(
   myAddress: string,
   targetAddress: string,
   signatureType: number,
-  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number; stopLossBalance: number },
+  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number; stopLossBalance: number; floorToPolymarketMin: boolean },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<CopyTradeResult> {
   const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [], copiedTrades: [] };
@@ -154,14 +154,21 @@ export async function runCopyTrade(
 
     // Target's bet in USD: use usdcSize if available, else size * price
     const targetBetUsd = act.usdcSize ?? (act.size ?? 0) * price;
-    let betUsd = computeBetSizeFromTarget(
-      targetBetUsd,
-      config.copyPercent,
-      config.maxBetUsd,
-      config.minBetUsd
-    );
-    if (betUsd < config.minBetUsd) continue;
-    if (betUsd < POLYMARKET_MIN_ORDER_USD) continue; // Polymarket rejects orders < $1
+    const rawAmount = Math.min((targetBetUsd * config.copyPercent) / 100, config.maxBetUsd);
+    let betUsd = rawAmount >= config.minBetUsd ? rawAmount : 0;
+    if (betUsd === 0) {
+      if (config.floorToPolymarketMin && rawAmount > 0 && rawAmount < POLYMARKET_MIN_ORDER_USD) {
+        betUsd = POLYMARKET_MIN_ORDER_USD; // Floor to $1 to copy smaller target bets
+      } else {
+        continue;
+      }
+    } else if (betUsd < POLYMARKET_MIN_ORDER_USD) {
+      if (config.floorToPolymarketMin) {
+        betUsd = POLYMARKET_MIN_ORDER_USD;
+      } else {
+        continue; // Polymarket rejects orders < $1
+      }
+    }
 
     const side = sideStr === "BUY" ? Side.BUY : Side.SELL;
 

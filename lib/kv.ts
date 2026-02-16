@@ -14,6 +14,8 @@ export interface CopyTraderConfig {
   minBetUsd: number;
   /** Stop copying when cash balance falls below this (0 = disabled) */
   stopLossBalance: number;
+  /** When true, round bets below $1 up to $1 (Polymarket min) to copy smaller target bets (default true) */
+  floorToPolymarketMin: boolean;
 }
 
 export interface CopyTraderState {
@@ -39,6 +41,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxBetUsd: 3,
   minBetUsd: 0.1,
   stopLossBalance: 0,
+  floorToPolymarketMin: true,
 };
 
 export async function getConfig(): Promise<CopyTraderConfig> {
@@ -50,6 +53,7 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     maxBetUsd: Number(c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd),
     minBetUsd: Number(c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd),
     stopLossBalance: Number(c.stopLossBalance ?? DEFAULT_CONFIG.stopLossBalance),
+    floorToPolymarketMin: c.floorToPolymarketMin !== false,
   };
   return migrated;
 }
