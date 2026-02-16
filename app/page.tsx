@@ -5,6 +5,18 @@ import { useEffect, useState, useRef, useCallback } from "react";
 const PAGE_SIZE = 10;
 const FETCH_INTERVAL_MS = 15000;
 const CONFIG_COOLDOWN_MS = 20000;
+const API_TIMEOUT_MS = 90000;
+
+async function fetchWithTimeout(url: string, opts: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
 
 function useDebouncedCallback<A extends unknown[]>(
   fn: (...args: A) => void,
@@ -78,9 +90,10 @@ export default function Home() {
 
   const fetchAll = useCallback(async (forceConfig = false) => {
     try {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
       const [statusRes, positionsRes] = await Promise.all([
-        fetch("/api/status"),
-        fetch("/api/positions"),
+        fetchWithTimeout(`${base}/api/status`),
+        fetchWithTimeout(`${base}/api/positions`),
       ]);
       if (!statusRes.ok) throw new Error("Failed to load status");
       if (!positionsRes.ok) throw new Error("Failed to load positions");
@@ -101,7 +114,9 @@ export default function Home() {
       setResolvedPositions(positionsData.resolved ?? []);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      const msg = e instanceof Error ? e.message : String(e);
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      setError(isAbort ? "Request timed out. Railway may be cold starting." : msg);
     } finally {
       setLoading(false);
     }
@@ -116,12 +131,14 @@ export default function Home() {
   const updateConfig = useCallback(async (updates: Partial<Config>, optimistic?: boolean) => {
     if (!status) return;
     if (optimistic && "enabled" in updates) {
+      configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: { ...s.config, ...updates } } : null));
     }
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/config", {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/config`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -145,7 +162,8 @@ export default function Home() {
     setRunResult(null);
     setError(null);
     try {
-      const res = await fetch("/api/run-now", { method: "POST" });
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/run-now`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
@@ -160,7 +178,9 @@ export default function Home() {
       }
       setTimeout(() => setRunResult(null), 5000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Run failed");
+      const msg = e instanceof Error ? e.message : "Run failed";
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      setError(isAbort ? "Run now timed out. Try again." : msg);
     } finally {
       setRunning(false);
     }
@@ -170,7 +190,8 @@ export default function Home() {
     setResetting(true);
     setError(null);
     try {
-      const res = await fetch("/api/reset-sync", { method: "POST" });
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/reset-sync`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Reset failed");
       await fetchAll(true);
@@ -184,7 +205,8 @@ export default function Home() {
   const cashout = async (pos: Position) => {
     setCashingOut(pos.asset);
     try {
-      const res = await fetch("/api/cashout", {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/cashout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -213,6 +235,7 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
+      configUpdatedAtRef.current = Date.now();
       setStatus((s) =>
         s ? { ...s, config: { ...s.config, [field]: clamped } } : null
       );
@@ -255,6 +278,18 @@ export default function Home() {
             Copying <span className="text-emerald-400">gabagool22</span> → your account
           </p>
         </header>
+
+        {error && (
+          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-4">
+            <p className="text-sm text-red-400 flex-1">{error}</p>
+            <button
+              onClick={() => setError(null)}
+              className="text-xs text-red-400 hover:text-red-300 shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
@@ -576,12 +611,16 @@ export default function Home() {
           {status?.state.lastError && (
             <span className="block mt-1 text-red-400">{status.state.lastError}</span>
           )}
-          <a href="/api/debug" target="_blank" rel="noopener noreferrer" className="block mt-2 text-zinc-500 hover:text-zinc-400">
+          <a
+            href={typeof window !== "undefined" ? `${window.location.origin}/api/debug` : "/api/debug"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block mt-2 text-zinc-500 hover:text-zinc-400"
+          >
             Debug
           </a>
         </footer>
 
-        {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
       </div>
     </main>
   );
