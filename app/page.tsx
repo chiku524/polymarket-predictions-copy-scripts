@@ -105,9 +105,10 @@ export default function Home() {
           if (statusData.config) configRef.current = statusData.config;
           return statusData;
         }
-        const inCooldown = Date.now() - configUpdatedAtRef.current < CONFIG_COOLDOWN_MS;
-        if (inCooldown && !forceConfig && configRef.current) {
-          return { ...statusData, config: configRef.current };
+        // Background poll (cron triggers etc): never overwrite config from server.
+        // Config only updates from user actions or explicit refresh (Run now, Reset, Cashout).
+        if (!forceConfig) {
+          return { ...statusData, config: prev.config };
         }
         if (statusData.config) configRef.current = statusData.config;
         return statusData;
