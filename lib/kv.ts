@@ -1,8 +1,10 @@
 import { kv } from "@vercel/kv";
+import { randomUUID } from "crypto";
 
 const CONFIG_KEY = "copy_trader_config";
 const STATE_KEY = "copy_trader_state";
 const ACTIVITY_KEY = "copy_trader_activity";
+const RUN_LOCK_KEY = "copy_trader_run_lock";
 
 export type TradingMode = "off" | "paper" | "live";
 
@@ -175,4 +177,18 @@ export async function appendActivity(trades: RecentActivity[]): Promise<void> {
   const current = await getRecentActivity();
   const updated = [...trades, ...current].slice(0, 50);
   await kv.set(ACTIVITY_KEY, updated);
+}
+
+export async function acquireRunLock(ttlSeconds = 120): Promise<string | null> {
+  const token = randomUUID();
+  const res = await kv.set(RUN_LOCK_KEY, token, { nx: true, ex: ttlSeconds });
+  if (res !== "OK") return null;
+  return token;
+}
+
+export async function releaseRunLock(token: string): Promise<void> {
+  const current = await kv.get<string>(RUN_LOCK_KEY);
+  if (current === token) {
+    await kv.del(RUN_LOCK_KEY);
+  }
 }

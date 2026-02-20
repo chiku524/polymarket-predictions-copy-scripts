@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getConfig, getState, setState, appendActivity } from "@/lib/kv";
+import { getConfig, getState, setState, appendActivity, acquireRunLock, releaseRunLock } from "@/lib/kv";
 import { runCopyTrade } from "@/lib/copy-trade";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -26,9 +26,15 @@ export async function POST() {
     return NextResponse.json({ error: "PRIVATE_KEY not configured" }, { status: 500 });
   }
 
+  const lockToken = await acquireRunLock(120);
+  if (!lockToken) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "busy" });
+  }
+
   try {
     const config = await getConfig();
     if (config.mode === "off" || !config.enabled) {
+      await setState({ lastRunAt: Date.now(), lastError: undefined });
       return NextResponse.json({ ok: true, skipped: true, reason: "mode_off" });
     }
     const state = await getState();
@@ -74,5 +80,9 @@ export async function POST() {
     const err = e instanceof Error ? e.message : String(e);
     console.error("Copy trade error:", e);
     return NextResponse.json({ ok: false, error: err }, { status: 500 });
+  } finally {
+    await releaseRunLock(lockToken).catch((e) => {
+      console.error("Failed releasing run lock:", e);
+    });
   }
 }

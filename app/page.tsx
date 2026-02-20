@@ -188,7 +188,13 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
-        setRunResult(data.reason === "mode_off" ? "Skipped (mode is Off)" : "Skipped");
+        if (data.reason === "mode_off") {
+          setRunResult("Skipped (mode is Off)");
+        } else if (data.reason === "busy") {
+          setRunResult("Skipped (another run is in progress)");
+        } else {
+          setRunResult("Skipped");
+        }
       } else if (data.mode === "paper") {
         if (data.paper > 0) {
           setRunResult(`Paper simulated ${data.paper} trade${data.paper === 1 ? "" : "s"}`);

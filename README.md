@@ -39,6 +39,34 @@ npm run dev
 
 Requires Vercel KV. Use `vercel link` and `vercel env pull` to pull env vars locally.
 
+### Persistent worker (recommended over cron)
+
+Instead of cron, you can run an always-on worker that continuously triggers `/api/copy-trade`.
+
+1. Set env vars for the worker process:
+   - `APP_BASE_URL` (e.g. `https://your-app-domain.com`)
+   - `CRON_SECRET` (must match your app env)
+   - optional: `WORKER_INTERVAL_MS` (default `15000`)
+   - optional: `WORKER_REQUEST_TIMEOUT_MS` (default `70000`)
+
+2. Start the worker:
+
+```bash
+npm run worker
+```
+
+3. Deploy pattern (production):
+   - Service A: web app (`next start`)
+   - Service B: worker (`npm run worker`)
+   - Both share the same Redis + wallet env vars.
+
+Control behavior from UI:
+- **Off** = pause (worker keeps running but places no new orders)
+- **Paper** = simulate only
+- **Live** = real orders
+
+To avoid duplicate triggers, run **either** cron **or** worker (not both).
+
 ---
 
 ## Python Script (Standalone)
