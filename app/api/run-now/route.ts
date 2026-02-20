@@ -28,8 +28,8 @@ export async function POST() {
 
   try {
     const config = await getConfig();
-    if (!config.enabled) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
+    if (config.mode === "off" || !config.enabled) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "mode_off" });
     }
     const state = await getState();
     const result = await runCopyTrade(
@@ -43,6 +43,8 @@ export async function POST() {
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
+        mode: config.mode,
+        walletUsagePercent: config.walletUsagePercent,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
@@ -60,8 +62,12 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
+      mode: result.mode,
       copied: result.copied,
+      paper: result.paper,
       failed: result.failed,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
     });
   } catch (e) {

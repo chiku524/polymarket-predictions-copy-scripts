@@ -36,6 +36,8 @@ function useDebouncedCallback<A extends unknown[]>(
 
 interface Config {
   enabled: boolean;
+  mode: "off" | "paper" | "live";
+  walletUsagePercent: number;
   copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
@@ -139,8 +141,13 @@ export default function Home() {
 
   const updateConfig = useCallback(async (updates: Partial<Config>, optimistic?: boolean) => {
     if (!status) return;
-    if (optimistic && "enabled" in updates) {
-      const nextConfig = { ...status.config, ...updates };
+    const previousConfig = status.config;
+    if (optimistic) {
+      const nextConfig = {
+        ...status.config,
+        ...updates,
+        ...(updates.mode ? { enabled: updates.mode !== "off" } : {}),
+      };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
@@ -160,10 +167,9 @@ export default function Home() {
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
     } catch (e) {
-      if (optimistic && "enabled" in updates) {
-        const revertedConfig = { ...status.config, enabled: !updates.enabled };
-        configRef.current = revertedConfig;
-        setStatus((s) => (s ? { ...s, config: revertedConfig } : null));
+      if (optimistic) {
+        configRef.current = previousConfig;
+        setStatus((s) => (s ? { ...s, config: previousConfig } : null));
       }
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -182,7 +188,13 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
-        setRunResult("Skipped (copy trading is disabled)");
+        setRunResult(data.reason === "mode_off" ? "Skipped (mode is Off)" : "Skipped");
+      } else if (data.mode === "paper") {
+        if (data.paper > 0) {
+          setRunResult(`Paper simulated ${data.paper} trade${data.paper === 1 ? "" : "s"}`);
+        } else {
+          setRunResult("Paper mode: no new trades");
+        }
       } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
         setRunResult(data.error);
       } else if (data.copied > 0) {
@@ -265,7 +277,7 @@ export default function Home() {
     }
   };
 
-  const toggleEnabled = () => updateConfig({ enabled: !status?.config.enabled }, true);
+  const setMode = (mode: Config["mode"]) => updateConfig({ mode }, true);
 
   const debouncedUpdateConfig = useDebouncedCallback(
     (updates: Partial<Config>) => updateConfig(updates, false),
@@ -275,7 +287,18 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
-      const nextConfig = { ...(status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0 }), [field]: clamped };
+      const nextConfig = {
+        ...(status?.config ?? {
+          enabled: false,
+          mode: "off" as const,
+          walletUsagePercent: 25,
+          copyPercent: 5,
+          maxBetUsd: 3,
+          minBetUsd: 0.1,
+          stopLossBalance: 0,
+        }),
+        [field]: clamped,
+      };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
@@ -305,7 +328,16 @@ export default function Home() {
     );
   }
 
-  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0, floorToPolymarketMin: true };
+  const cfg = status?.config ?? {
+    enabled: false,
+    mode: "off" as const,
+    walletUsagePercent: 25,
+    copyPercent: 5,
+    maxBetUsd: 3,
+    minBetUsd: 0.1,
+    stopLossBalance: 0,
+    floorToPolymarketMin: true,
+  };
   const activity = status?.recentActivity ?? [];
 
   return (
@@ -333,7 +365,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          You don&apos;t need to keep this page open. When the toggle is on, set up a cron (e.g. cron-job.org) to GET your-app-url/api/copy-trade every minute with <code className="bg-zinc-800 px-1 rounded">Authorization: Bearer YOUR_CRON_SECRET</code>. Resolved winnings are claimed automatically every 10 copy-trade runs, or use Claim now.
+          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates trades without placing orders. Live places real orders and respects your wallet usage cap. Cron can still call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> for scheduled runs.
         </p>
 
         {/* Balance + Control bar */}
@@ -343,26 +375,31 @@ export default function Home() {
             <p className="text-2xl font-semibold text-emerald-400">
               ${(status?.cashBalance ?? 0).toFixed(2)}
             </p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Mode: <span className="uppercase text-zinc-300">{cfg.mode}</span>
+            </p>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              role="switch"
-              aria-checked={cfg.enabled}
-              onClick={toggleEnabled}
-              disabled={saving}
-              className={`
-                relative w-14 h-8 rounded-full transition-colors flex-shrink-0
-                ${cfg.enabled ? "bg-emerald-500" : "bg-zinc-700"}
-                ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-              `}
-            >
-              <span
-                className={`
-                  absolute top-1 w-6 h-6 rounded-full bg-white shadow transition-transform
-                  ${cfg.enabled ? "left-7 translate-x-[-2px]" : "left-1"}
-                `}
-              />
-            </button>
+            <div className="flex items-center gap-2 rounded-lg bg-zinc-800/70 p-1">
+              {(["off", "paper", "live"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setMode(mode)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium uppercase tracking-wide transition-colors disabled:opacity-50 ${
+                    cfg.mode === mode
+                      ? mode === "live"
+                        ? "bg-emerald-500/30 text-emerald-300"
+                        : mode === "paper"
+                          ? "bg-sky-500/30 text-sky-300"
+                          : "bg-zinc-700 text-zinc-200"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
             <div className="flex flex-col items-end gap-1">
               <div className="flex flex-wrap gap-2">
                 <button
@@ -396,9 +433,9 @@ export default function Home() {
 
         {/* Settings */}
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Bet size</h2>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Copying at <strong>{cfg.copyPercent}%</strong> of gabagool22&apos;s bet, max <strong>${cfg.maxBetUsd}</strong> per trade
+            Copying at <strong>{cfg.copyPercent}%</strong> of gabagool22&apos;s bet, max <strong>${cfg.maxBetUsd}</strong> per trade. In <strong>Live</strong> mode, each run can use up to <strong>{cfg.walletUsagePercent}%</strong> of wallet balance.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
@@ -426,7 +463,7 @@ export default function Home() {
               <input
                 type="number"
                 min={1}
-                max={100}
+                max={10000}
                 step="any"
                 value={cfg.maxBetUsd}
                 onChange={(e) =>
@@ -434,13 +471,34 @@ export default function Home() {
                     "maxBetUsd",
                     parseFloat(e.target.value) || 3,
                     1,
-                    100
+                    10000
                   )
                 }
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
               <p className="text-xs text-zinc-500 mt-0.5">Polymarket min $1 per order</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Wallet usage % / run</p>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={cfg.walletUsagePercent}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "walletUsagePercent",
+                    parseInt(e.target.value, 10) || 25,
+                    1,
+                    100
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Caps spend per run in Live/Paper</p>
             </div>
             <div className="flex items-center gap-2">
               <button

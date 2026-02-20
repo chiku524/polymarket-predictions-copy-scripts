@@ -4,7 +4,7 @@ Copy trades from another Polymarket user (e.g. [gabagool22](https://polymarket.c
 
 ## Web UI (Vercel)
 
-A Next.js app provides a control UI to toggle copy trading, adjust percentage ranges, and run manually.
+A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**), adjust sizing, cap wallet usage per run, and run manually.
 
 ### Deploy to Vercel
 
@@ -21,7 +21,7 @@ A Next.js app provides a control UI to toggle copy trading, adjust percentage ra
    - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
    - `CRON_SECRET` – Any random string (e.g. `openssl rand -hex 32`) to secure the cron job
 
-4. **Cron** runs every minute when enabled. Enable copy trading in the UI to start.
+4. **Cron** runs every minute when scheduled. Set mode to **Live** in the UI to place real orders, or **Paper** to simulate.
 
 5. **Claiming winnings** – Resolved positions must be “claimed” to move winnings to your cash balance. The app:
    - Runs **claim automatically every 10 copy-trade runs** (configurable via `CLAIM_EVERY_N_RUNS`).
@@ -114,3 +114,8 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 | `POLL_INTERVAL` | `15` | Seconds between checks |
 | `MIN_BET_USD` | `1.0` | Minimum bet size (USDC) |
 | `CRON_SECRET` | — | Required for Vercel cron (random string) |
+
+### UI Controls (Web App)
+
+- **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
+- **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live

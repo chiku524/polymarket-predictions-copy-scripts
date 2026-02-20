@@ -20,8 +20,8 @@ async function runCopyTradeHandler() {
 
   try {
     const config = await getConfig();
-    if (!config.enabled) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
+    if (config.mode === "off" || !config.enabled) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "mode_off" });
     }
 
     const state = await getState();
@@ -36,12 +36,15 @@ async function runCopyTradeHandler() {
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
+        mode: config.mode,
+        walletUsagePercent: config.walletUsagePercent,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
 
-    const runsSinceLastClaim = (state.runsSinceLastClaim ?? 0) + 1;
-    const shouldClaim = runsSinceLastClaim >= CLAIM_EVERY_N_RUNS;
+    const isLive = config.mode === "live";
+    const runsSinceLastClaim = isLive ? (state.runsSinceLastClaim ?? 0) + 1 : state.runsSinceLastClaim ?? 0;
+    const shouldClaim = isLive && runsSinceLastClaim >= CLAIM_EVERY_N_RUNS;
 
     const stateUpdate: Parameters<typeof setState>[0] = {
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
@@ -72,8 +75,12 @@ async function runCopyTradeHandler() {
 
     return NextResponse.json({
       ok: true,
+      mode: result.mode,
       copied: result.copied,
+      paper: result.paper,
       failed: result.failed,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
       claimed: claimResult?.claimed,
     });
