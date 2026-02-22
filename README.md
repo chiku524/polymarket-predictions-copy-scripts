@@ -1,6 +1,6 @@
-# Polymarket Copy Trading Scripts
+# Polymarket Paired Strategy Trader
 
-Copy trades from another Polymarket user (e.g. [gabagool22](https://polymarket.com/profile/gabagool22)) to your account, with each bet sized at **5–10% of your cash balance** based on the odds.
+Run your own BTC/ETH Up-Down paired strategy on Polymarket with **Off / Paper / Live** modes, wallet budget caps, and paper analytics before going live.
 
 ## Web UI (Vercel)
 
@@ -17,14 +17,14 @@ A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**)
 3. **Environment variables** (Settings → Environment Variables):
    - `PRIVATE_KEY` – Your wallet private key
    - `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
-   - `TARGET_ADDRESS` – `0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d`
+   - `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
    - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
    - `CRON_SECRET` – Any random string (e.g. `openssl rand -hex 32`) to secure the cron job
 
 4. **Cron** runs every minute when scheduled. Set mode to **Live** in the UI to place real orders, or **Paper** to simulate.
 
 5. **Claiming winnings** – Resolved positions must be “claimed” to move winnings to your cash balance. The app:
-   - Runs **claim automatically every 10 copy-trade runs** (configurable via `CLAIM_EVERY_N_RUNS`).
+   - Runs **claim automatically every 10 strategy runs** (configurable via `CLAIM_EVERY_N_RUNS`).
    - Or use the **Claim now** button in the UI (or `POST /api/claim-now`).
    - For **Polymarket proxy wallets** (default), set Builder API keys so the relayer can execute the claim from your proxy:
      - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE` (or `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`).

@@ -38,6 +38,10 @@ interface Config {
   enabled: boolean;
   mode: "off" | "paper" | "live";
   walletUsagePercent: number;
+  pairChunkUsd: number;
+  pairMinEdgeCents: number;
+  pairLookbackSeconds: number;
+  pairMaxMarketsPerRun: number;
   copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
@@ -219,17 +223,21 @@ export default function Home() {
         const simVolume = Number(data.simulatedVolumeUsd ?? 0);
         if (data.paper > 0) {
           setRunResult(
-            `Paper simulated ${data.paper} trade${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
+            `Paper simulated ${data.paper} pair${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
           );
         } else {
-          setRunResult("Paper mode: no new trades");
+          const eligible = Number(data.eligibleSignals ?? 0);
+          const evaluated = Number(data.evaluatedSignals ?? 0);
+          setRunResult(`Paper mode: no fills (${eligible}/${evaluated} eligible/evaluated)`);
         }
       } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
         setRunResult(data.error);
       } else if (data.copied > 0) {
-        setRunResult(`Copied ${data.copied} trade${data.copied === 1 ? "" : "s"}`);
+        setRunResult(`Executed ${data.copied} paired signal${data.copied === 1 ? "" : "s"}`);
       } else {
-        setRunResult("No new trades to copy");
+        const eligible = Number(data.eligibleSignals ?? 0);
+        const evaluated = Number(data.evaluatedSignals ?? 0);
+        setRunResult(`No paired entries (${eligible}/${evaluated} eligible/evaluated)`);
       }
       setTimeout(() => setRunResult(null), 5000);
     } catch (e) {
@@ -339,6 +347,10 @@ export default function Home() {
           enabled: false,
           mode: "off" as const,
           walletUsagePercent: 25,
+          pairChunkUsd: 3,
+          pairMinEdgeCents: 0.5,
+          pairLookbackSeconds: 120,
+          pairMaxMarketsPerRun: 4,
           copyPercent: 5,
           maxBetUsd: 3,
           minBetUsd: 0.1,
@@ -379,6 +391,10 @@ export default function Home() {
     enabled: false,
     mode: "off" as const,
     walletUsagePercent: 25,
+    pairChunkUsd: 3,
+    pairMinEdgeCents: 0.5,
+    pairLookbackSeconds: 120,
+    pairMaxMarketsPerRun: 4,
     copyPercent: 5,
     maxBetUsd: 3,
     minBetUsd: 0.1,
@@ -407,9 +423,9 @@ export default function Home() {
       <div className="max-w-2xl mx-auto p-6 md:p-8">
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">Polymarket Copy Trader</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Polymarket Paired Trader</h1>
           <p className="mt-1 text-zinc-500">
-            Copying <span className="text-emerald-400">gabagool22</span> → your account
+            Running <span className="text-emerald-400">paired BTC/ETH Up-Down strategy</span> on your account
           </p>
         </header>
 
@@ -427,7 +443,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates trades without placing orders. Live places real orders and respects your wallet usage cap. Cron can still call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> for scheduled runs.
+          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker or cron can call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> to run each cycle.
         </p>
 
         {/* Balance + Control bar */}
@@ -497,23 +513,23 @@ export default function Home() {
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Copying at <strong>{cfg.copyPercent}%</strong> of gabagool22&apos;s bet, max <strong>${cfg.maxBetUsd}</strong> per trade. In <strong>Live</strong> mode, each run can use up to <strong>{cfg.walletUsagePercent}%</strong> of wallet balance.
+            Running a paired BTC/ETH Up-Down strategy with chunk size <strong>${cfg.pairChunkUsd}</strong>, minimum edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, and wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Copy %</p>
+              <p className="text-xs text-zinc-500 mb-1">Min edge (cents)</p>
               <input
                 type="number"
-                min={1}
-                max={100}
-                step={1}
-                value={cfg.copyPercent}
+                min={0}
+                max={50}
+                step={0.1}
+                value={cfg.pairMinEdgeCents}
                 onChange={(e) =>
                   handleNumericConfigChange(
-                    "copyPercent",
-                    parseInt(e.target.value, 10) || 5,
-                    1,
-                    100
+                    "pairMinEdgeCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    50
                   )
                 }
                 disabled={saving}
@@ -521,16 +537,16 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max bet (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Pair chunk (USDC)</p>
               <input
                 type="number"
                 min={1}
                 max={10000}
                 step="any"
-                value={cfg.maxBetUsd}
+                value={cfg.pairChunkUsd}
                 onChange={(e) =>
                   handleNumericConfigChange(
-                    "maxBetUsd",
+                    "pairChunkUsd",
                     parseFloat(e.target.value) || 3,
                     1,
                     10000
@@ -539,7 +555,7 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Polymarket min $1 per order</p>
+              <p className="text-xs text-zinc-500 mt-0.5">Target spend per paired signal</p>
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Wallet usage % / run</p>
@@ -562,6 +578,47 @@ export default function Home() {
               />
               <p className="text-xs text-zinc-500 mt-0.5">Caps spend per run in Live/Paper</p>
             </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Signal lookback (sec)</p>
+              <input
+                type="number"
+                min={20}
+                max={900}
+                step={5}
+                value={cfg.pairLookbackSeconds}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairLookbackSeconds",
+                    parseInt(e.target.value, 10) || 120,
+                    20,
+                    900
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Recent global trades used for signals</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max pairs / run</p>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                step={1}
+                value={cfg.pairMaxMarketsPerRun}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairMaxMarketsPerRun",
+                    parseInt(e.target.value, 10) || 4,
+                    1,
+                    20
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
             <div className="flex items-center gap-2">
               <button
                 role="switch"
@@ -583,7 +640,7 @@ export default function Home() {
               </button>
               <div>
                 <p className="text-xs text-zinc-500">Floor to $1</p>
-                <p className="text-xs text-zinc-600">Round small bets up to $1 to copy more trades</p>
+                <p className="text-xs text-zinc-600">Round small paired legs up to Polymarket min order</p>
               </div>
             </div>
             <div>
@@ -624,7 +681,7 @@ export default function Home() {
                 disabled={saving}
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Stops copying when balance falls below this (0 = off)</p>
+              <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
             </div>
           </div>
         </section>
@@ -654,7 +711,7 @@ export default function Home() {
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
             </div>
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
-              <p className="text-[11px] text-zinc-500 uppercase">Simulated trades</p>
+              <p className="text-[11px] text-zinc-500 uppercase">Simulated pairs</p>
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalSimulatedTrades}</p>
             </div>
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
@@ -667,7 +724,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500">
-            Avg trades/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
+            Avg pairs/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
             {paperStats.lastRunAt ? ` · Last paper run: ${new Date(paperStats.lastRunAt).toLocaleString()}` : ""}
           </p>
           {paperStats.lastError && (
@@ -679,7 +736,7 @@ export default function Home() {
         {activity.length > 0 && (
           <section className="mb-8">
             <h2 className="text-sm font-medium text-zinc-400 mb-3">
-              {cfg.mode === "paper" ? "Recently simulated" : "Recently copied"}
+              {cfg.mode === "paper" ? "Recently simulated" : "Recently executed"}
             </h2>
             <div className="space-y-2">
               {activity.slice(0, 8).map((a, i) => (
@@ -847,14 +904,14 @@ export default function Home() {
         {/* Status footer */}
         <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500">
           Last run: {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
-          Last copied: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
+          Last execution: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
           {" · "}
           Last claim: {status?.state.lastClaimAt ? new Date(status.state.lastClaimAt).toLocaleString() : "—"}
           {status?.state.lastClaimResult && (
             <span> ({status.state.lastClaimResult.claimed} claimed)</span>
           )}
           {status?.state.runsSinceLastClaim != null && (
-            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 copy-trade runs ({status.state.runsSinceLastClaim}/10)</span>
+            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 strategy runs ({status.state.runsSinceLastClaim}/10)</span>
           )}
           {status?.state.lastError && (
             <span className="block mt-1 text-red-400">{status.state.lastError}</span>

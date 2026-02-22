@@ -16,10 +16,18 @@ export interface CopyTraderConfig {
   mode: TradingMode;
   /** Max % of wallet balance this bot can allocate per run */
   walletUsagePercent: number;
-  /** Copy at this % of target's bet (default 5) */
+  /** Legacy copy percentage (kept for historical compatibility / analysis only) */
   copyPercent: number;
-  /** Max USDC per bet (default 3) */
+  /** Legacy max bet (kept for backward compatibility) */
   maxBetUsd: number;
+  /** Paired strategy chunk size per signal (USD) */
+  pairChunkUsd: number;
+  /** Minimum required edge in cents (1 - (pA + pB)) */
+  pairMinEdgeCents: number;
+  /** Recency window for global market signal discovery */
+  pairLookbackSeconds: number;
+  /** Maximum number of paired signals to execute per run */
+  pairMaxMarketsPerRun: number;
   /** Min bet to place - skip if below (default 0.10) */
   minBetUsd: number;
   /** Stop copying when cash balance falls below this (0 = disabled) */
@@ -77,6 +85,10 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   walletUsagePercent: 25,
   copyPercent: 5,
   maxBetUsd: 3,
+  pairChunkUsd: 3,
+  pairMinEdgeCents: 0.5,
+  pairLookbackSeconds: 120,
+  pairMaxMarketsPerRun: 4,
   minBetUsd: 0.1,
   stopLossBalance: 0,
   floorToPolymarketMin: true,
@@ -125,6 +137,22 @@ function sanitizeConfig(
     ),
     copyPercent: clamp(toFiniteNumber(raw.copyPercent, current.copyPercent), 1, 100),
     maxBetUsd: clamp(toFiniteNumber(raw.maxBetUsd, current.maxBetUsd), 1, 10000),
+    pairChunkUsd: clamp(toFiniteNumber(raw.pairChunkUsd, current.pairChunkUsd), 1, 10000),
+    pairMinEdgeCents: clamp(
+      toFiniteNumber(raw.pairMinEdgeCents, current.pairMinEdgeCents),
+      0,
+      50
+    ),
+    pairLookbackSeconds: clamp(
+      toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
+      20,
+      900
+    ),
+    pairMaxMarketsPerRun: clamp(
+      toFiniteNumber(raw.pairMaxMarketsPerRun, current.pairMaxMarketsPerRun),
+      1,
+      20
+    ),
     minBetUsd: clamp(toFiniteNumber(raw.minBetUsd, current.minBetUsd), 0.1, 10000),
     stopLossBalance: clamp(
       toFiniteNumber(raw.stopLossBalance, current.stopLossBalance),
@@ -156,6 +184,12 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.walletUsagePercent ?? c.walletPercent ?? DEFAULT_CONFIG.walletUsagePercent,
     copyPercent: c.copyPercent ?? c.minPercent ?? DEFAULT_CONFIG.copyPercent,
     maxBetUsd: c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd,
+    pairChunkUsd: c.pairChunkUsd ?? c.maxBetUsd ?? DEFAULT_CONFIG.pairChunkUsd,
+    pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,
+    pairLookbackSeconds:
+      c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
+    pairMaxMarketsPerRun:
+      c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
     minBetUsd: c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd,
     stopLossBalance: c.stopLossBalance ?? DEFAULT_CONFIG.stopLossBalance,
     floorToPolymarketMin: c.floorToPolymarketMin,

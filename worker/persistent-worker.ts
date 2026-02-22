@@ -95,7 +95,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => stop("SIGINT"));
   process.on("SIGTERM", () => stop("SIGTERM"));
 
-  console.log(`[worker] Starting persistent copy-trade worker`);
+  console.log(`[worker] Starting persistent strategy worker`);
   console.log(`[worker] target=${targetUrl}`);
   console.log(`[worker] intervalMs=${intervalMs}, timeoutMs=${timeoutMs}`);
 

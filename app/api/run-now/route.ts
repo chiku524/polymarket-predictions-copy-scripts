@@ -8,11 +8,10 @@ import {
   releaseRunLock,
   recordPaperRun,
 } from "@/lib/kv";
-import { runCopyTrade } from "@/lib/copy-trade";
+import { runPairedStrategy } from "@/lib/paired-strategy";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
-const TARGET_ADDRESS = process.env.TARGET_ADDRESS ?? "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 
 export const maxDuration = 60;
@@ -30,10 +29,6 @@ export async function GET() {
  * Use for "Run now" button in the UI.
  */
 export async function POST() {
-  if (!PRIVATE_KEY) {
-    return NextResponse.json({ error: "PRIVATE_KEY not configured" }, { status: 500 });
-  }
-
   const lockToken = await acquireRunLock(120);
   if (!lockToken) {
     return NextResponse.json({ ok: true, skipped: true, reason: "busy" });
@@ -45,20 +40,24 @@ export async function POST() {
       await setState({ lastRunAt: Date.now(), lastError: undefined });
       return NextResponse.json({ ok: true, skipped: true, reason: "mode_off" });
     }
+    if (config.mode === "live" && !PRIVATE_KEY) {
+      return NextResponse.json({ error: "PRIVATE_KEY not configured for Live mode" }, { status: 500 });
+    }
     const state = await getState();
-    const result = await runCopyTrade(
-      PRIVATE_KEY,
+    const result = await runPairedStrategy(
+      PRIVATE_KEY ?? "",
       MY_ADDRESS,
-      TARGET_ADDRESS,
       SIGNATURE_TYPE,
       {
-        copyPercent: config.copyPercent,
-        maxBetUsd: config.maxBetUsd,
+        mode: config.mode,
+        walletUsagePercent: config.walletUsagePercent,
+        pairChunkUsd: config.pairChunkUsd,
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
-        mode: config.mode,
-        walletUsagePercent: config.walletUsagePercent,
+        pairMinEdgeCents: config.pairMinEdgeCents,
+        pairLookbackSeconds: config.pairLookbackSeconds,
+        pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
@@ -92,6 +91,8 @@ export async function POST() {
       paper: result.paper,
       simulatedVolumeUsd: result.simulatedVolumeUsd,
       failed: result.failed,
+      evaluatedSignals: result.evaluatedSignals,
+      eligibleSignals: result.eligibleSignals,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
