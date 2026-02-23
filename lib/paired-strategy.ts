@@ -8,6 +8,8 @@ const CHAIN_ID = 137;
 const POLYMARKET_MIN_ORDER_USD = 1;
 
 type TradingMode = "off" | "paper" | "live";
+type PairCoin = "BTC" | "ETH";
+type PairCadence = "5m" | "15m" | "hourly" | "other";
 
 interface GlobalTrade {
   conditionId: string;
@@ -30,12 +32,17 @@ interface PairSignal {
   conditionId: string;
   title: string;
   slug?: string;
-  coin: "BTC" | "ETH";
-  cadence: "5m" | "15m" | "hourly" | "other";
+  coin: PairCoin;
+  cadence: PairCadence;
   latestTimestamp: number;
   pairSum: number;
   edge: number;
   outcomes: [OutcomeSnapshot, OutcomeSnapshot];
+}
+
+export interface SignalBreakdown {
+  byCoin: Record<PairCoin, number>;
+  byCadence: Record<PairCadence, number>;
 }
 
 interface TradeConditionSnapshot {
@@ -75,6 +82,9 @@ export interface PairedStrategyResult {
   evaluatedSignals: number;
   eligibleSignals: number;
   rejectedReasons: Record<string, number>;
+  evaluatedBreakdown: SignalBreakdown;
+  eligibleBreakdown: SignalBreakdown;
+  executedBreakdown: SignalBreakdown;
   error?: string;
   lastTimestamp?: number;
   copiedKeys: string[];
@@ -90,15 +100,27 @@ function bumpReason(map: Record<string, number>, reason: string) {
   map[reason] = (map[reason] ?? 0) + 1;
 }
 
+function emptyBreakdown(): SignalBreakdown {
+  return {
+    byCoin: { BTC: 0, ETH: 0 },
+    byCadence: { "5m": 0, "15m": 0, hourly: 0, other: 0 },
+  };
+}
+
+function bumpBreakdown(target: SignalBreakdown, signal: Pick<PairSignal, "coin" | "cadence">) {
+  target.byCoin[signal.coin] = (target.byCoin[signal.coin] ?? 0) + 1;
+  target.byCadence[signal.cadence] = (target.byCadence[signal.cadence] ?? 0) + 1;
+}
+
 function detectUpDownIdentity(
   question: string,
   slug?: string
-): { coin: "BTC" | "ETH"; cadence: "5m" | "15m" | "hourly" | "other" } | null {
+): { coin: PairCoin; cadence: PairCadence } | null {
   const q = question.toLowerCase();
   const s = String(slug ?? "").toLowerCase();
   const hay = `${q} ${s}`;
 
-  let coin: "BTC" | "ETH" | null = null;
+  let coin: PairCoin | null = null;
   if (
     hay.includes("bitcoin up or down") ||
     hay.includes("btc up or down") ||
@@ -116,7 +138,7 @@ function detectUpDownIdentity(
   }
   if (!coin) return null;
 
-  let cadence: "5m" | "15m" | "hourly" | "other" = "other";
+  let cadence: PairCadence = "other";
   if (s.includes("updown-5m")) cadence = "5m";
   else if (s.includes("updown-15m")) cadence = "15m";
   else if (
@@ -151,7 +173,7 @@ async function getMarketCached(client: ClobClient, conditionId: string): Promise
 }
 
 function isCadenceEnabled(
-  cadence: "5m" | "15m" | "hourly" | "other",
+  cadence: PairCadence,
   toggles: { cadence5m: boolean; cadence15m: boolean; cadenceHourly: boolean }
 ): boolean {
   if (cadence === "5m") return toggles.cadence5m;
@@ -365,6 +387,9 @@ export async function runPairedStrategy(
     evaluatedSignals: 0,
     eligibleSignals: 0,
     rejectedReasons: {},
+    evaluatedBreakdown: emptyBreakdown(),
+    eligibleBreakdown: emptyBreakdown(),
+    executedBreakdown: emptyBreakdown(),
     copiedKeys: [],
     copiedTrades: [],
   };
@@ -430,6 +455,9 @@ export async function runPairedStrategy(
   }
   const signals = signalBuild.signals;
   result.evaluatedSignals = signals.length;
+  for (const signal of signals) {
+    bumpBreakdown(result.evaluatedBreakdown, signal);
+  }
   if (result.evaluatedSignals === 0) {
     reject("no_recent_signals");
   }
@@ -513,11 +541,13 @@ export async function runPairedStrategy(
     }
 
     result.eligibleSignals++;
+    bumpBreakdown(result.eligibleBreakdown, signal);
 
     if (mode === "paper") {
       copiedSet.add(signalKey);
       result.copied++;
       result.paper++;
+      bumpBreakdown(result.executedBreakdown, signal);
       result.simulatedVolumeUsd += legAUsd + legBUsd;
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
@@ -571,6 +601,7 @@ export async function runPairedStrategy(
       if (okA && okB) {
         copiedSet.add(signalKey);
         result.copied++;
+        bumpBreakdown(result.executedBreakdown, signal);
         remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
         lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
         result.copiedTrades.push({

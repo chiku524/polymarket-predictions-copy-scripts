@@ -7,6 +7,7 @@ import {
   acquireRunLock,
   releaseRunLock,
   recordPaperRun,
+  recordStrategyDiagnostics,
 } from "@/lib/kv";
 import { runPairedStrategy } from "@/lib/paired-strategy";
 
@@ -67,25 +68,32 @@ export async function POST() {
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
 
+    const diagnostics = {
+      mode: result.mode,
+      evaluatedSignals: result.evaluatedSignals,
+      eligibleSignals: result.eligibleSignals,
+      rejectedReasons: result.rejectedReasons,
+      evaluatedBreakdown: result.evaluatedBreakdown,
+      eligibleBreakdown: result.eligibleBreakdown,
+      executedBreakdown: result.executedBreakdown,
+      copied: result.copied,
+      paper: result.paper,
+      failed: result.failed,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
+      error: result.error,
+      timestamp: Date.now(),
+    };
+
     await setState({
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
       copiedKeys: result.copiedKeys.length > 0 ? result.copiedKeys : state.copiedKeys,
       lastRunAt: Date.now(),
       lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
       lastError: result.error,
-      lastStrategyDiagnostics: {
-        mode: result.mode,
-        evaluatedSignals: result.evaluatedSignals,
-        eligibleSignals: result.eligibleSignals,
-        rejectedReasons: result.rejectedReasons,
-        copied: result.copied,
-        paper: result.paper,
-        failed: result.failed,
-        budgetCapUsd: result.budgetCapUsd,
-        budgetUsedUsd: result.budgetUsedUsd,
-        timestamp: Date.now(),
-      },
+      lastStrategyDiagnostics: diagnostics,
     });
+    await recordStrategyDiagnostics(diagnostics);
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
     }

@@ -7,6 +7,7 @@ import {
   acquireRunLock,
   releaseRunLock,
   recordPaperRun,
+  recordStrategyDiagnostics,
 } from "@/lib/kv";
 import { runPairedStrategy } from "@/lib/paired-strategy";
 import { claimWinnings } from "@/lib/claim";
@@ -64,24 +65,30 @@ async function runCopyTradeHandler() {
     const runsSinceLastClaim = isLive ? (state.runsSinceLastClaim ?? 0) + 1 : state.runsSinceLastClaim ?? 0;
     const shouldClaim = isLive && runsSinceLastClaim >= CLAIM_EVERY_N_RUNS;
 
+    const diagnostics = {
+      mode: result.mode,
+      evaluatedSignals: result.evaluatedSignals,
+      eligibleSignals: result.eligibleSignals,
+      rejectedReasons: result.rejectedReasons,
+      evaluatedBreakdown: result.evaluatedBreakdown,
+      eligibleBreakdown: result.eligibleBreakdown,
+      executedBreakdown: result.executedBreakdown,
+      copied: result.copied,
+      paper: result.paper,
+      failed: result.failed,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
+      error: result.error,
+      timestamp: Date.now(),
+    };
+
     const stateUpdate: Parameters<typeof setState>[0] = {
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
       copiedKeys: result.copiedKeys.length > 0 ? result.copiedKeys : state.copiedKeys,
       lastRunAt: Date.now(),
       lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
       lastError: result.error,
-      lastStrategyDiagnostics: {
-        mode: result.mode,
-        evaluatedSignals: result.evaluatedSignals,
-        eligibleSignals: result.eligibleSignals,
-        rejectedReasons: result.rejectedReasons,
-        copied: result.copied,
-        paper: result.paper,
-        failed: result.failed,
-        budgetCapUsd: result.budgetCapUsd,
-        budgetUsedUsd: result.budgetUsedUsd,
-        timestamp: Date.now(),
-      },
+      lastStrategyDiagnostics: diagnostics,
       runsSinceLastClaim: shouldClaim ? 0 : runsSinceLastClaim,
     };
 
@@ -99,6 +106,7 @@ async function runCopyTradeHandler() {
     }
 
     await setState(stateUpdate);
+    await recordStrategyDiagnostics(diagnostics);
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
     }

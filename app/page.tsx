@@ -54,6 +54,36 @@ interface Config {
   floorToPolymarketMin?: boolean;
 }
 
+interface StrategyBreakdown {
+  byCoin: {
+    BTC: number;
+    ETH: number;
+  };
+  byCadence: {
+    "5m": number;
+    "15m": number;
+    hourly: number;
+    other: number;
+  };
+}
+
+interface StrategyDiagnostics {
+  mode: "off" | "paper" | "live";
+  evaluatedSignals: number;
+  eligibleSignals: number;
+  rejectedReasons: Record<string, number>;
+  evaluatedBreakdown?: StrategyBreakdown;
+  eligibleBreakdown?: StrategyBreakdown;
+  executedBreakdown?: StrategyBreakdown;
+  copied: number;
+  paper: number;
+  failed: number;
+  budgetCapUsd: number;
+  budgetUsedUsd: number;
+  error?: string;
+  timestamp: number;
+}
+
 interface Status {
   config: Config;
   state: {
@@ -61,18 +91,7 @@ interface Status {
     lastRunAt?: number;
     lastCopiedAt?: number;
     lastError?: string;
-    lastStrategyDiagnostics?: {
-      mode: "off" | "paper" | "live";
-      evaluatedSignals: number;
-      eligibleSignals: number;
-      rejectedReasons: Record<string, number>;
-      copied: number;
-      paper: number;
-      failed: number;
-      budgetCapUsd: number;
-      budgetUsedUsd: number;
-      timestamp: number;
-    };
+    lastStrategyDiagnostics?: StrategyDiagnostics;
     runsSinceLastClaim?: number;
     lastClaimAt?: number;
     lastClaimResult?: { claimed: number; failed: number };
@@ -97,6 +116,12 @@ interface Status {
       budgetUsedUsd: number;
       error?: string;
     }[];
+  };
+  strategyDiagnosticsHistory?: {
+    totalRuns: number;
+    lastRunAt?: number;
+    lastError?: string;
+    recentRuns: StrategyDiagnostics[];
   };
 }
 
@@ -135,6 +160,7 @@ export default function Home() {
   const [positionTab, setPositionTab] = useState<PositionTab>("active");
   const [activePage, setActivePage] = useState(0);
   const [resolvedPage, setResolvedPage] = useState(0);
+  const [trendRuns, setTrendRuns] = useState(20);
   const configUpdatedAtRef = useRef<number>(0);
   const configRef = useRef<Config | null>(null);
 
@@ -449,6 +475,87 @@ export default function Home() {
     (a, b) => b[1] - a[1]
   );
   const rejectionTotal = rejectedEntries.reduce((sum, [, count]) => sum + count, 0);
+  const diagnosticsHistory = status?.strategyDiagnosticsHistory ?? {
+    totalRuns: 0,
+    recentRuns: [] as StrategyDiagnostics[],
+  };
+  const trendWindow = Math.max(1, trendRuns);
+  const trendSample = diagnosticsHistory.recentRuns.slice(0, trendWindow);
+  const trendCount = trendSample.length;
+  const trendExecutedTotal = trendSample.reduce(
+    (sum, run) => sum + (run.mode === "paper" ? run.paper : run.copied),
+    0
+  );
+  const trendAvgEvaluated =
+    trendCount > 0 ? trendSample.reduce((sum, run) => sum + run.evaluatedSignals, 0) / trendCount : 0;
+  const trendAvgEligible =
+    trendCount > 0 ? trendSample.reduce((sum, run) => sum + run.eligibleSignals, 0) / trendCount : 0;
+  const trendAvgExecuted = trendCount > 0 ? trendExecutedTotal / trendCount : 0;
+  const trendErrorRuns = trendSample.filter((run) => Boolean(run.error) || run.failed > 0).length;
+  const trendBudgetUsed = trendSample.reduce((sum, run) => sum + run.budgetUsedUsd, 0);
+  const trendBudgetCap = trendSample.reduce((sum, run) => sum + run.budgetCapUsd, 0);
+  const trendAvgBudgetUsagePct = trendBudgetCap > 0 ? (trendBudgetUsed / trendBudgetCap) * 100 : 0;
+  const trendRejectedReasons = trendSample.reduce<Record<string, number>>((acc, run) => {
+    for (const [reason, count] of Object.entries(run.rejectedReasons ?? {})) {
+      acc[reason] = (acc[reason] ?? 0) + Number(count || 0);
+    }
+    return acc;
+  }, {});
+  const trendRejectedEntries = Object.entries(trendRejectedReasons).sort((a, b) => b[1] - a[1]);
+  const trendRejectionTotal = trendRejectedEntries.reduce((sum, [, count]) => sum + count, 0);
+  const makeBreakdown = () =>
+    ({
+      byCoin: { BTC: 0, ETH: 0 },
+      byCadence: { "5m": 0, "15m": 0, hourly: 0, other: 0 },
+    }) satisfies StrategyBreakdown;
+  const trendEvaluatedBreakdown = trendSample.reduce((acc, run) => {
+    const breakdown = run.evaluatedBreakdown;
+    acc.byCoin.BTC += breakdown?.byCoin.BTC ?? 0;
+    acc.byCoin.ETH += breakdown?.byCoin.ETH ?? 0;
+    acc.byCadence["5m"] += breakdown?.byCadence["5m"] ?? 0;
+    acc.byCadence["15m"] += breakdown?.byCadence["15m"] ?? 0;
+    acc.byCadence.hourly += breakdown?.byCadence.hourly ?? 0;
+    acc.byCadence.other += breakdown?.byCadence.other ?? 0;
+    return acc;
+  }, makeBreakdown());
+  const trendEligibleBreakdown = trendSample.reduce((acc, run) => {
+    const breakdown = run.eligibleBreakdown;
+    acc.byCoin.BTC += breakdown?.byCoin.BTC ?? 0;
+    acc.byCoin.ETH += breakdown?.byCoin.ETH ?? 0;
+    acc.byCadence["5m"] += breakdown?.byCadence["5m"] ?? 0;
+    acc.byCadence["15m"] += breakdown?.byCadence["15m"] ?? 0;
+    acc.byCadence.hourly += breakdown?.byCadence.hourly ?? 0;
+    acc.byCadence.other += breakdown?.byCadence.other ?? 0;
+    return acc;
+  }, makeBreakdown());
+  const trendExecutedBreakdown = trendSample.reduce((acc, run) => {
+    const breakdown = run.executedBreakdown;
+    acc.byCoin.BTC += breakdown?.byCoin.BTC ?? 0;
+    acc.byCoin.ETH += breakdown?.byCoin.ETH ?? 0;
+    acc.byCadence["5m"] += breakdown?.byCadence["5m"] ?? 0;
+    acc.byCadence["15m"] += breakdown?.byCadence["15m"] ?? 0;
+    acc.byCadence.hourly += breakdown?.byCadence.hourly ?? 0;
+    acc.byCadence.other += breakdown?.byCadence.other ?? 0;
+    return acc;
+  }, makeBreakdown());
+  const lastDiagEvaluatedBreakdown =
+    lastDiag?.evaluatedBreakdown ??
+    ({
+      byCoin: { BTC: 0, ETH: 0 },
+      byCadence: { "5m": 0, "15m": 0, hourly: 0, other: 0 },
+    } satisfies StrategyBreakdown);
+  const lastDiagEligibleBreakdown =
+    lastDiag?.eligibleBreakdown ??
+    ({
+      byCoin: { BTC: 0, ETH: 0 },
+      byCadence: { "5m": 0, "15m": 0, hourly: 0, other: 0 },
+    } satisfies StrategyBreakdown);
+  const lastDiagExecutedBreakdown =
+    lastDiag?.executedBreakdown ??
+    ({
+      byCoin: { BTC: 0, ETH: 0 },
+      byCadence: { "5m": 0, "15m": 0, hourly: 0, other: 0 },
+    } satisfies StrategyBreakdown);
   const selectedCoins = [cfg.enableBtc ? "BTC" : null, cfg.enableEth ? "ETH" : null]
     .filter(Boolean)
     .join(", ") || "None";
@@ -873,6 +980,38 @@ export default function Home() {
                 Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
                 Updated: {new Date(lastDiag.timestamp).toLocaleString()}
               </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Evaluated mix</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {lastDiagEvaluatedBreakdown.byCoin.BTC} · ETH {lastDiagEvaluatedBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {lastDiagEvaluatedBreakdown.byCadence["5m"]} · 15m {lastDiagEvaluatedBreakdown.byCadence["15m"]} ·
+                    Hourly {lastDiagEvaluatedBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Eligible mix</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {lastDiagEligibleBreakdown.byCoin.BTC} · ETH {lastDiagEligibleBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {lastDiagEligibleBreakdown.byCadence["5m"]} · 15m {lastDiagEligibleBreakdown.byCadence["15m"]} ·
+                    Hourly {lastDiagEligibleBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Executed/Paper mix</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {lastDiagExecutedBreakdown.byCoin.BTC} · ETH {lastDiagExecutedBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {lastDiagExecutedBreakdown.byCadence["5m"]} · 15m {lastDiagExecutedBreakdown.byCadence["15m"]} ·
+                    Hourly {lastDiagExecutedBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+              </div>
               {rejectedEntries.length > 0 ? (
                 <div className="space-y-1">
                   {rejectedEntries.slice(0, 10).map(([reason, count]) => (
@@ -893,6 +1032,138 @@ export default function Home() {
             </>
           ) : (
             <p className="text-xs text-zinc-600">No run diagnostics yet. Trigger Run now or wait for worker cycle.</p>
+          )}
+        </section>
+
+        {/* Strategy diagnostics trend */}
+        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Strategy diagnostics trend
+              </h2>
+              <p className="text-xs text-zinc-600 mt-1">
+                Last-N run rollup for tuning and Phase 2 calibration.
+              </p>
+            </div>
+            <label className="text-xs text-zinc-500 flex items-center gap-2">
+              Last
+              <select
+                value={trendRuns}
+                onChange={(e) => setTrendRuns(Math.max(1, parseInt(e.target.value, 10) || 20))}
+                className="px-2 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-300"
+              >
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+              runs
+            </label>
+          </div>
+          {trendCount > 0 ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Runs used</p>
+                  <p className="text-lg font-semibold text-zinc-200">{trendCount}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg evaluated</p>
+                  <p className="text-lg font-semibold text-zinc-200">{trendAvgEvaluated.toFixed(1)}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg eligible</p>
+                  <p className="text-lg font-semibold text-zinc-200">{trendAvgEligible.toFixed(1)}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg executed/paper</p>
+                  <p className="text-lg font-semibold text-zinc-200">{trendAvgExecuted.toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg budget used</p>
+                  <p className="text-lg font-semibold text-zinc-200">{trendAvgBudgetUsagePct.toFixed(1)}%</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Evaluated mix (Phase 2)</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {trendEvaluatedBreakdown.byCoin.BTC} · ETH {trendEvaluatedBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {trendEvaluatedBreakdown.byCadence["5m"]} · 15m {trendEvaluatedBreakdown.byCadence["15m"]} ·
+                    Hourly {trendEvaluatedBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Eligible mix (Phase 2)</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {trendEligibleBreakdown.byCoin.BTC} · ETH {trendEligibleBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {trendEligibleBreakdown.byCadence["5m"]} · 15m {trendEligibleBreakdown.byCadence["15m"]} ·
+                    Hourly {trendEligibleBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+                <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
+                  <p className="text-[11px] text-zinc-500 uppercase mb-1">Executed/Paper mix (Phase 2)</p>
+                  <p className="text-xs text-zinc-300">
+                    BTC {trendExecutedBreakdown.byCoin.BTC} · ETH {trendExecutedBreakdown.byCoin.ETH}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    5m {trendExecutedBreakdown.byCadence["5m"]} · 15m {trendExecutedBreakdown.byCadence["15m"]} ·
+                    Hourly {trendExecutedBreakdown.byCadence.hourly}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-500 mb-3">
+                Error/failure runs: {trendErrorRuns} of {trendCount}
+                {diagnosticsHistory.lastRunAt
+                  ? ` · Last trend update: ${new Date(diagnosticsHistory.lastRunAt).toLocaleString()}`
+                  : ""}
+              </p>
+              {trendRejectedEntries.length > 0 ? (
+                <div className="space-y-1 mb-3">
+                  {trendRejectedEntries.slice(0, 8).map(([reason, count]) => (
+                    <div
+                      key={reason}
+                      className="flex items-center justify-between text-xs rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-1.5"
+                    >
+                      <span className="text-zinc-300">{reason}</span>
+                      <span className="text-zinc-500">
+                        {count} ({trendRejectionTotal > 0 ? ((count / trendRejectionTotal) * 100).toFixed(1) : "0.0"}
+                        %)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-600 mb-3">No aggregated rejections for selected runs.</p>
+              )}
+
+              <div className="space-y-1">
+                {trendSample.slice(0, 10).map((run, idx) => (
+                  <div
+                    key={`${run.timestamp}-${idx}`}
+                    className="flex items-center justify-between text-xs rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-1.5"
+                  >
+                    <span className="text-zinc-400">{new Date(run.timestamp).toLocaleString()}</span>
+                    <span className="text-zinc-500">
+                      {run.mode.toUpperCase()} · Eval {run.evaluatedSignals} · Elig {run.eligibleSignals} · Exec{" "}
+                      {run.mode === "paper" ? run.paper : run.copied}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-zinc-600">
+              No diagnostics history yet. Run the strategy a few cycles to populate trends.
+            </p>
           )}
         </section>
 

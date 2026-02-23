@@ -6,6 +6,7 @@ const STATE_KEY = "copy_trader_state";
 const ACTIVITY_KEY = "copy_trader_activity";
 const RUN_LOCK_KEY = "copy_trader_run_lock";
 const PAPER_STATS_KEY = "copy_trader_paper_stats";
+const STRATEGY_DIAGNOSTICS_HISTORY_KEY = "copy_trader_strategy_diagnostics_history";
 
 export type TradingMode = "off" | "paper" | "live";
 
@@ -64,12 +65,36 @@ export interface StrategyDiagnostics {
   evaluatedSignals: number;
   eligibleSignals: number;
   rejectedReasons: Record<string, number>;
+  evaluatedBreakdown?: StrategyBreakdown;
+  eligibleBreakdown?: StrategyBreakdown;
+  executedBreakdown?: StrategyBreakdown;
   copied: number;
   paper: number;
   failed: number;
   budgetCapUsd: number;
   budgetUsedUsd: number;
+  error?: string;
   timestamp: number;
+}
+
+export interface StrategyBreakdown {
+  byCoin: {
+    BTC: number;
+    ETH: number;
+  };
+  byCadence: {
+    "5m": number;
+    "15m": number;
+    hourly: number;
+    other: number;
+  };
+}
+
+export interface StrategyDiagnosticsHistory {
+  totalRuns: number;
+  lastRunAt?: number;
+  lastError?: string;
+  recentRuns: StrategyDiagnostics[];
 }
 
 export interface RecentActivity {
@@ -133,6 +158,11 @@ const DEFAULT_PAPER_STATS: PaperStats = {
   recentRuns: [],
 };
 
+const DEFAULT_STRATEGY_DIAGNOSTICS_HISTORY: StrategyDiagnosticsHistory = {
+  totalRuns: 0,
+  recentRuns: [],
+};
+
 function toFiniteNumber(value: unknown, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -145,6 +175,58 @@ function clamp(value: number, min: number, max: number): number {
 function normalizeMode(value: unknown): TradingMode | undefined {
   if (value === "off" || value === "paper" || value === "live") return value;
   return undefined;
+}
+
+function normalizeBreakdown(value: unknown): StrategyBreakdown {
+  const root =
+    value && typeof value === "object"
+      ? (value as { byCoin?: Record<string, unknown>; byCadence?: Record<string, unknown> })
+      : {};
+  const byCoin = root.byCoin ?? {};
+  const byCadence = root.byCadence ?? {};
+  return {
+    byCoin: {
+      BTC: Math.max(0, toFiniteNumber(byCoin.BTC, 0)),
+      ETH: Math.max(0, toFiniteNumber(byCoin.ETH, 0)),
+    },
+    byCadence: {
+      "5m": Math.max(0, toFiniteNumber(byCadence["5m"], 0)),
+      "15m": Math.max(0, toFiniteNumber(byCadence["15m"], 0)),
+      hourly: Math.max(0, toFiniteNumber(byCadence.hourly, 0)),
+      other: Math.max(0, toFiniteNumber(byCadence.other, 0)),
+    },
+  };
+}
+
+function normalizeRejectedReasons(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {};
+  const result: Record<string, number> = {};
+  for (const [key, rawCount] of Object.entries(value as Record<string, unknown>)) {
+    const count = Math.max(0, toFiniteNumber(rawCount, 0));
+    if (!key || count <= 0) continue;
+    result[key] = count;
+  }
+  return result;
+}
+
+function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    mode: normalizeMode(raw.mode) ?? "off",
+    evaluatedSignals: Math.max(0, toFiniteNumber(raw.evaluatedSignals, 0)),
+    eligibleSignals: Math.max(0, toFiniteNumber(raw.eligibleSignals, 0)),
+    rejectedReasons: normalizeRejectedReasons(raw.rejectedReasons),
+    evaluatedBreakdown: normalizeBreakdown(raw.evaluatedBreakdown),
+    eligibleBreakdown: normalizeBreakdown(raw.eligibleBreakdown),
+    executedBreakdown: normalizeBreakdown(raw.executedBreakdown),
+    copied: Math.max(0, toFiniteNumber(raw.copied, 0)),
+    paper: Math.max(0, toFiniteNumber(raw.paper, 0)),
+    failed: Math.max(0, toFiniteNumber(raw.failed, 0)),
+    budgetCapUsd: Math.max(0, toFiniteNumber(raw.budgetCapUsd, 0)),
+    budgetUsedUsd: Math.max(0, toFiniteNumber(raw.budgetUsedUsd, 0)),
+    error: typeof raw.error === "string" ? raw.error : undefined,
+    timestamp: Math.max(0, toFiniteNumber(raw.timestamp, Date.now())),
+  };
 }
 
 function sanitizeConfig(
@@ -256,7 +338,9 @@ export async function getState(): Promise<CopyTraderState> {
         lastRunAt: s.lastRunAt,
         lastCopiedAt: s.lastCopiedAt,
         lastError: s.lastError,
-        lastStrategyDiagnostics: s.lastStrategyDiagnostics,
+        lastStrategyDiagnostics: s.lastStrategyDiagnostics
+          ? normalizeStrategyDiagnostics(s.lastStrategyDiagnostics)
+          : undefined,
         runsSinceLastClaim: s.runsSinceLastClaim ?? 0,
         lastClaimAt: s.lastClaimAt,
         lastClaimResult: s.lastClaimResult,
@@ -342,6 +426,38 @@ export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
 
 export async function resetPaperStats(): Promise<void> {
   await kv.set(PAPER_STATS_KEY, { ...DEFAULT_PAPER_STATS });
+}
+
+export async function getStrategyDiagnosticsHistory(): Promise<StrategyDiagnosticsHistory> {
+  const stored = await kv.get<StrategyDiagnosticsHistory>(STRATEGY_DIAGNOSTICS_HISTORY_KEY);
+  if (!stored) return { ...DEFAULT_STRATEGY_DIAGNOSTICS_HISTORY };
+  return {
+    totalRuns: Math.max(0, toFiniteNumber(stored.totalRuns, 0)),
+    lastRunAt: stored.lastRunAt ? toFiniteNumber(stored.lastRunAt, Date.now()) : undefined,
+    lastError: typeof stored.lastError === "string" ? stored.lastError : undefined,
+    recentRuns: Array.isArray(stored.recentRuns)
+      ? stored.recentRuns.map((run) => normalizeStrategyDiagnostics(run)).slice(0, 200)
+      : [],
+  };
+}
+
+export async function recordStrategyDiagnostics(
+  diagnostics: StrategyDiagnostics
+): Promise<StrategyDiagnosticsHistory> {
+  const current = await getStrategyDiagnosticsHistory();
+  const normalized = normalizeStrategyDiagnostics(diagnostics);
+  const updated: StrategyDiagnosticsHistory = {
+    totalRuns: current.totalRuns + 1,
+    lastRunAt: normalized.timestamp,
+    lastError: normalized.error,
+    recentRuns: [normalized, ...current.recentRuns].slice(0, 200),
+  };
+  await kv.set(STRATEGY_DIAGNOSTICS_HISTORY_KEY, updated);
+  return updated;
+}
+
+export async function resetStrategyDiagnosticsHistory(): Promise<void> {
+  await kv.set(STRATEGY_DIAGNOSTICS_HISTORY_KEY, { ...DEFAULT_STRATEGY_DIAGNOSTICS_HISTORY });
 }
 
 export async function acquireRunLock(ttlSeconds = 120): Promise<string | null> {
