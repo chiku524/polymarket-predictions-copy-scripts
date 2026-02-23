@@ -11,7 +11,7 @@ type TradingMode = "off" | "paper" | "live";
 
 interface GlobalTrade {
   conditionId: string;
-  title: string;
+  title?: string;
   slug?: string;
   asset: string;
   outcome: string;
@@ -31,10 +31,37 @@ interface PairSignal {
   title: string;
   slug?: string;
   coin: "BTC" | "ETH";
+  cadence: "5m" | "15m" | "hourly" | "other";
   latestTimestamp: number;
   pairSum: number;
   edge: number;
   outcomes: [OutcomeSnapshot, OutcomeSnapshot];
+}
+
+interface TradeConditionSnapshot {
+  latestTimestamp: number;
+  byOutcome: Map<string, OutcomeSnapshot>;
+}
+
+interface ClobMarketToken {
+  token_id?: string;
+  outcome?: string;
+  price?: number | string;
+}
+
+interface ClobMarket {
+  question?: string;
+  market_slug?: string;
+  active?: boolean;
+  closed?: boolean;
+  accepting_orders?: boolean;
+  enable_order_book?: boolean;
+  tokens?: ClobMarketToken[];
+}
+
+interface SignalBuildResult {
+  signals: PairSignal[];
+  diagnostics: Record<string, number>;
 }
 
 export interface PairedStrategyResult {
@@ -59,25 +86,110 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function isUpDownTarget(title: string): "BTC" | "ETH" | null {
-  const t = title.toLowerCase();
-  if (t.includes("bitcoin up or down")) return "BTC";
-  if (t.includes("ethereum up or down")) return "ETH";
-  return null;
+function bumpReason(map: Record<string, number>, reason: string) {
+  map[reason] = (map[reason] ?? 0) + 1;
 }
 
-async function getRecentPairSignals(lookbackSeconds: number, tradeLimit = 1000): Promise<PairSignal[]> {
+function detectUpDownIdentity(
+  question: string,
+  slug?: string
+): { coin: "BTC" | "ETH"; cadence: "5m" | "15m" | "hourly" | "other" } | null {
+  const q = question.toLowerCase();
+  const s = String(slug ?? "").toLowerCase();
+  const hay = `${q} ${s}`;
+
+  let coin: "BTC" | "ETH" | null = null;
+  if (
+    hay.includes("bitcoin up or down") ||
+    hay.includes("btc up or down") ||
+    hay.includes("bitcoin-up-or-down") ||
+    hay.includes("btc-updown")
+  ) {
+    coin = "BTC";
+  } else if (
+    hay.includes("ethereum up or down") ||
+    hay.includes("eth up or down") ||
+    hay.includes("ethereum-up-or-down") ||
+    hay.includes("eth-updown")
+  ) {
+    coin = "ETH";
+  }
+  if (!coin) return null;
+
+  let cadence: "5m" | "15m" | "hourly" | "other" = "other";
+  if (s.includes("updown-5m")) cadence = "5m";
+  else if (s.includes("updown-15m")) cadence = "15m";
+  else if (
+    s.includes("up-or-down") &&
+    /(?:\d{1,2}(?:am|pm)-et)\b/.test(s) &&
+    !s.includes("updown-5m") &&
+    !s.includes("updown-15m")
+  ) {
+    cadence = "hourly";
+  }
+
+  return { coin, cadence };
+}
+
+const MARKET_CACHE_TTL_MS = 60_000;
+const marketCache = new Map<string, { fetchedAt: number; market: ClobMarket | null }>();
+
+async function getMarketCached(client: ClobClient, conditionId: string): Promise<ClobMarket | null> {
+  const now = Date.now();
+  const cached = marketCache.get(conditionId);
+  if (cached && now - cached.fetchedAt < MARKET_CACHE_TTL_MS) {
+    return cached.market;
+  }
+  try {
+    const market = (await client.getMarket(conditionId)) as ClobMarket;
+    marketCache.set(conditionId, { fetchedAt: now, market });
+    return market;
+  } catch {
+    marketCache.set(conditionId, { fetchedAt: now, market: null });
+    return null;
+  }
+}
+
+function isCadenceEnabled(
+  cadence: "5m" | "15m" | "hourly" | "other",
+  toggles: { cadence5m: boolean; cadence15m: boolean; cadenceHourly: boolean }
+): boolean {
+  if (cadence === "5m") return toggles.cadence5m;
+  if (cadence === "15m") return toggles.cadence15m;
+  if (cadence === "hourly") return toggles.cadenceHourly;
+  return false;
+}
+
+async function getRecentPairSignals(params: {
+  lookbackSeconds: number;
+  includeBtc: boolean;
+  includeEth: boolean;
+  cadence5m: boolean;
+  cadence15m: boolean;
+  cadenceHourly: boolean;
+  tradeLimit?: number;
+  maxConditionsToInspect?: number;
+}): Promise<SignalBuildResult> {
+  const {
+    lookbackSeconds,
+    includeBtc,
+    includeEth,
+    cadence5m,
+    cadence15m,
+    cadenceHourly,
+    tradeLimit = 1000,
+    maxConditionsToInspect = 120,
+  } = params;
   const nowSec = Math.floor(Date.now() / 1000);
   const res = await fetch(`${DATA_API}/trades?limit=${tradeLimit}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Trades fetch failed: ${res.status}`);
   const trades = (await res.json()) as GlobalTrade[];
-  const grouped = new Map<string, { title: string; slug?: string; coin: "BTC" | "ETH"; byOutcome: Map<string, OutcomeSnapshot> }>();
+  const grouped = new Map<string, TradeConditionSnapshot>();
+  const diagnostics: Record<string, number> = {};
 
   for (const t of Array.isArray(trades) ? trades : []) {
     const conditionId = String(t.conditionId ?? "");
-    const title = String(t.title ?? "");
-    const coin = isUpDownTarget(title);
-    if (!conditionId || !coin) continue;
+    if (!conditionId) continue;
     const ts = toNum(t.timestamp);
     if (!ts || nowSec - ts > lookbackSeconds) continue;
     const price = toNum(t.price);
@@ -86,14 +198,7 @@ async function getRecentPairSignals(lookbackSeconds: number, tradeLimit = 1000):
     const asset = String(t.asset ?? "");
     if (!outcome || !asset) continue;
 
-    const bucket =
-      grouped.get(conditionId) ??
-      {
-        title,
-        slug: t.slug,
-        coin,
-        byOutcome: new Map<string, OutcomeSnapshot>(),
-      };
+    const bucket = grouped.get(conditionId) ?? { latestTimestamp: 0, byOutcome: new Map<string, OutcomeSnapshot>() };
     const current = bucket.byOutcome.get(outcome);
     if (!current || ts > current.timestamp) {
       bucket.byOutcome.set(outcome, {
@@ -103,34 +208,127 @@ async function getRecentPairSignals(lookbackSeconds: number, tradeLimit = 1000):
         timestamp: ts,
       });
     }
+    bucket.latestTimestamp = Math.max(bucket.latestTimestamp, ts);
     grouped.set(conditionId, bucket);
   }
 
+  const marketClient = new ClobClient(CLOB_HOST, CHAIN_ID);
+  const conditionIds = Array.from(grouped.entries())
+    .sort((a, b) => b[1].latestTimestamp - a[1].latestTimestamp)
+    .map(([conditionId]) => conditionId)
+    .slice(0, maxConditionsToInspect);
+  const marketsByCondition = new Map<string, ClobMarket | null>();
+  const LOOKUP_BATCH_SIZE = 15;
+  for (let i = 0; i < conditionIds.length; i += LOOKUP_BATCH_SIZE) {
+    const batchIds = conditionIds.slice(i, i + LOOKUP_BATCH_SIZE);
+    const batchMarkets = await Promise.all(batchIds.map((conditionId) => getMarketCached(marketClient, conditionId)));
+    batchIds.forEach((conditionId, idx) => {
+      marketsByCondition.set(conditionId, batchMarkets[idx] ?? null);
+    });
+  }
+
   const signals: PairSignal[] = [];
-  grouped.forEach((g, conditionId) => {
-    if (g.byOutcome.size < 2) return;
-    const outcomes = Array.from(g.byOutcome.values())
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 2) as [OutcomeSnapshot, OutcomeSnapshot];
-    if (outcomes[0].asset === outcomes[1].asset) return;
+  for (const conditionId of conditionIds) {
+    const groupedSnapshot = grouped.get(conditionId);
+    if (!groupedSnapshot) continue;
+    if (groupedSnapshot.byOutcome.size < 2) {
+      bumpReason(diagnostics, "missing_two_outcomes");
+      continue;
+    }
+
+    const market = marketsByCondition.get(conditionId) ?? null;
+    if (!market) {
+      bumpReason(diagnostics, "market_lookup_failed");
+      continue;
+    }
+    if (market.closed) {
+      bumpReason(diagnostics, "market_closed");
+      continue;
+    }
+    if (!market.active) {
+      bumpReason(diagnostics, "market_inactive");
+      continue;
+    }
+    if (!market.accepting_orders) {
+      bumpReason(diagnostics, "market_not_accepting_orders");
+      continue;
+    }
+    if (!market.enable_order_book) {
+      bumpReason(diagnostics, "market_orderbook_disabled");
+      continue;
+    }
+    const title = String(market.question ?? "");
+    const slug = String(market.market_slug ?? "");
+    const identity = detectUpDownIdentity(title, slug);
+    if (!identity) {
+      bumpReason(diagnostics, "market_not_btc_eth_updown");
+      continue;
+    }
+    if ((identity.coin === "BTC" && !includeBtc) || (identity.coin === "ETH" && !includeEth)) {
+      bumpReason(diagnostics, "coin_disabled");
+      continue;
+    }
+    if (!isCadenceEnabled(identity.cadence, { cadence5m, cadence15m, cadenceHourly })) {
+      bumpReason(diagnostics, "cadence_disabled");
+      continue;
+    }
+
+    const tokens = Array.isArray(market.tokens) ? market.tokens.slice(0, 2) : [];
+    if (tokens.length < 2) {
+      bumpReason(diagnostics, "market_missing_tokens");
+      continue;
+    }
+
+    const resolvedOutcomes = tokens
+      .map((token) => {
+        const outcome = String(token.outcome ?? "");
+        const tokenId = String(token.token_id ?? "");
+        const snapshot = groupedSnapshot.byOutcome.get(outcome);
+        const price = snapshot?.price ?? toNum(token.price);
+        const timestamp = snapshot?.timestamp ?? groupedSnapshot.latestTimestamp;
+        if (!outcome || !tokenId || price <= 0 || price >= 1) return null;
+        return {
+          asset: tokenId,
+          outcome,
+          price,
+          timestamp,
+        } as OutcomeSnapshot;
+      })
+      .filter(Boolean) as OutcomeSnapshot[];
+
+    if (resolvedOutcomes.length < 2) {
+      bumpReason(diagnostics, "missing_valid_token_snapshot");
+      continue;
+    }
+    const [first, second] = resolvedOutcomes as [OutcomeSnapshot, OutcomeSnapshot];
+    if (first.asset === second.asset) {
+      bumpReason(diagnostics, "duplicate_token_assets");
+      continue;
+    }
+
+    const outcomes: [OutcomeSnapshot, OutcomeSnapshot] = [first, second];
     const pairSum = outcomes[0].price + outcomes[1].price;
     const edge = 1 - pairSum;
     signals.push({
       conditionId,
-      title: g.title,
-      slug: g.slug,
-      coin: g.coin,
+      title,
+      slug,
+      coin: identity.coin,
+      cadence: identity.cadence,
       latestTimestamp: Math.max(outcomes[0].timestamp, outcomes[1].timestamp),
       pairSum,
       edge,
       outcomes,
     });
-  });
+  }
 
-  return signals.sort((a, b) => {
-    if (b.edge !== a.edge) return b.edge - a.edge;
-    return b.latestTimestamp - a.latestTimestamp;
-  });
+  return {
+    diagnostics,
+    signals: signals.sort((a, b) => {
+      if (b.edge !== a.edge) return b.edge - a.edge;
+      return b.latestTimestamp - a.latestTimestamp;
+    }),
+  };
 }
 
 export async function runPairedStrategy(
@@ -147,6 +345,11 @@ export async function runPairedStrategy(
     pairMinEdgeCents: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
+    enableBtc: boolean;
+    enableEth: boolean;
+    enableCadence5m: boolean;
+    enableCadence15m: boolean;
+    enableCadenceHourly: boolean;
   },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<PairedStrategyResult> {
@@ -197,10 +400,37 @@ export async function runPairedStrategy(
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
   const minLegUsd = Math.max(0.1, Number(config.minBetUsd) || 0.1);
+  const includeBtc = config.enableBtc !== false;
+  const includeEth = config.enableEth !== false;
+  const cadence5m = config.enableCadence5m !== false;
+  const cadence15m = config.enableCadence15m !== false;
+  const cadenceHourly = config.enableCadenceHourly !== false;
 
-  const signals = await getRecentPairSignals(lookbackSeconds);
+  if (!includeBtc && !includeEth) {
+    result.error = "Both BTC and ETH are disabled";
+    reject("all_coins_disabled");
+    return result;
+  }
+  if (!cadence5m && !cadence15m && !cadenceHourly) {
+    result.error = "All cadences are disabled";
+    reject("all_cadences_disabled");
+    return result;
+  }
+
+  const signalBuild = await getRecentPairSignals({
+    lookbackSeconds,
+    includeBtc,
+    includeEth,
+    cadence5m,
+    cadence15m,
+    cadenceHourly,
+  });
+  for (const [reason, count] of Object.entries(signalBuild.diagnostics)) {
+    result.rejectedReasons[reason] = (result.rejectedReasons[reason] ?? 0) + count;
+  }
+  const signals = signalBuild.signals;
   result.evaluatedSignals = signals.length;
-  if (signals.length === 0) {
+  if (result.evaluatedSignals === 0) {
     reject("no_recent_signals");
   }
 

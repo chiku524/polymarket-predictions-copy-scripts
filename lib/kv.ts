@@ -28,6 +28,16 @@ export interface CopyTraderConfig {
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
   pairMaxMarketsPerRun: number;
+  /** Include BTC Up/Down markets in strategy */
+  enableBtc: boolean;
+  /** Include ETH Up/Down markets in strategy */
+  enableEth: boolean;
+  /** Include 5-minute cadence markets */
+  enableCadence5m: boolean;
+  /** Include 15-minute cadence markets */
+  enableCadence15m: boolean;
+  /** Include hourly cadence markets */
+  enableCadenceHourly: boolean;
   /** Min bet to place - skip if below (default 0.10) */
   minBetUsd: number;
   /** Stop copying when cash balance falls below this (0 = disabled) */
@@ -103,6 +113,11 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairMinEdgeCents: 0.5,
   pairLookbackSeconds: 120,
   pairMaxMarketsPerRun: 4,
+  enableBtc: true,
+  enableEth: true,
+  enableCadence5m: true,
+  enableCadence15m: true,
+  enableCadenceHourly: true,
   minBetUsd: 0.1,
   stopLossBalance: 0,
   floorToPolymarketMin: true,
@@ -167,6 +182,11 @@ function sanitizeConfig(
       1,
       20
     ),
+    enableBtc: raw.enableBtc !== false,
+    enableEth: raw.enableEth !== false,
+    enableCadence5m: raw.enableCadence5m !== false,
+    enableCadence15m: raw.enableCadence15m !== false,
+    enableCadenceHourly: raw.enableCadenceHourly !== false,
     minBetUsd: clamp(toFiniteNumber(raw.minBetUsd, current.minBetUsd), 0.1, 10000),
     stopLossBalance: clamp(
       toFiniteNumber(raw.stopLossBalance, current.stopLossBalance),
@@ -204,6 +224,11 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
       c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
+    enableBtc: c.enableBtc,
+    enableEth: c.enableEth,
+    enableCadence5m: c.enableCadence5m,
+    enableCadence15m: c.enableCadence15m,
+    enableCadenceHourly: c.enableCadenceHourly,
     minBetUsd: c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd,
     stopLossBalance: c.stopLossBalance ?? DEFAULT_CONFIG.stopLossBalance,
     floorToPolymarketMin: c.floorToPolymarketMin,

@@ -42,6 +42,11 @@ interface Config {
   pairMinEdgeCents: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
+  enableBtc: boolean;
+  enableEth: boolean;
+  enableCadence5m: boolean;
+  enableCadence15m: boolean;
+  enableCadenceHourly: boolean;
   copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
@@ -363,6 +368,11 @@ export default function Home() {
           pairMinEdgeCents: 0.5,
           pairLookbackSeconds: 120,
           pairMaxMarketsPerRun: 4,
+          enableBtc: true,
+          enableEth: true,
+          enableCadence5m: true,
+          enableCadence15m: true,
+          enableCadenceHourly: true,
           copyPercent: 5,
           maxBetUsd: 3,
           minBetUsd: 0.1,
@@ -407,6 +417,11 @@ export default function Home() {
     pairMinEdgeCents: 0.5,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
+    enableBtc: true,
+    enableEth: true,
+    enableCadence5m: true,
+    enableCadence15m: true,
+    enableCadenceHourly: true,
     copyPercent: 5,
     maxBetUsd: 3,
     minBetUsd: 0.1,
@@ -434,6 +449,16 @@ export default function Home() {
     (a, b) => b[1] - a[1]
   );
   const rejectionTotal = rejectedEntries.reduce((sum, [, count]) => sum + count, 0);
+  const selectedCoins = [cfg.enableBtc ? "BTC" : null, cfg.enableEth ? "ETH" : null]
+    .filter(Boolean)
+    .join(", ") || "None";
+  const selectedCadences = [
+    cfg.enableCadence5m ? "5m" : null,
+    cfg.enableCadence15m ? "15m" : null,
+    cfg.enableCadenceHourly ? "Hourly" : null,
+  ]
+    .filter(Boolean)
+    .join(", ") || "None";
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -530,7 +555,7 @@ export default function Home() {
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Running a paired BTC/ETH Up-Down strategy with chunk size <strong>${cfg.pairChunkUsd}</strong>, minimum edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, and wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
+            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
@@ -699,6 +724,72 @@ export default function Home() {
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
               <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
+            </div>
+            <div className="min-w-[220px]">
+              <p className="text-xs text-zinc-500 mb-1">Coins</p>
+              <div className="flex items-center gap-2 rounded-lg bg-zinc-900/70 border border-zinc-800 p-1">
+                <button
+                  onClick={() => updateConfig({ enableBtc: !cfg.enableBtc }, true)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+                    cfg.enableBtc
+                      ? "bg-emerald-500/25 text-emerald-300"
+                      : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  BTC
+                </button>
+                <button
+                  onClick={() => updateConfig({ enableEth: !cfg.enableEth }, true)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+                    cfg.enableEth
+                      ? "bg-emerald-500/25 text-emerald-300"
+                      : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  ETH
+                </button>
+              </div>
+            </div>
+            <div className="min-w-[280px]">
+              <p className="text-xs text-zinc-500 mb-1">Cadence filters</p>
+              <div className="flex items-center gap-2 rounded-lg bg-zinc-900/70 border border-zinc-800 p-1">
+                <button
+                  onClick={() => updateConfig({ enableCadence5m: !cfg.enableCadence5m }, true)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+                    cfg.enableCadence5m
+                      ? "bg-sky-500/25 text-sky-300"
+                      : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  5m
+                </button>
+                <button
+                  onClick={() => updateConfig({ enableCadence15m: !cfg.enableCadence15m }, true)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+                    cfg.enableCadence15m
+                      ? "bg-sky-500/25 text-sky-300"
+                      : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  15m
+                </button>
+                <button
+                  onClick={() => updateConfig({ enableCadenceHourly: !cfg.enableCadenceHourly }, true)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+                    cfg.enableCadenceHourly
+                      ? "bg-sky-500/25 text-sky-300"
+                      : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  Hourly
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500 mt-0.5">Other cadences are ignored in Phase 1.</p>
             </div>
           </div>
         </section>

@@ -148,3 +148,5 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 
 - **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
 - **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
+- **Coins**: enable/disable `BTC` and `ETH` independently
+- **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets

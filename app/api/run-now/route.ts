@@ -58,6 +58,11 @@ export async function POST() {
         pairMinEdgeCents: config.pairMinEdgeCents,
         pairLookbackSeconds: config.pairLookbackSeconds,
         pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
+        enableBtc: config.enableBtc,
+        enableEth: config.enableEth,
+        enableCadence5m: config.enableCadence5m,
+        enableCadence15m: config.enableCadence15m,
+        enableCadenceHourly: config.enableCadenceHourly,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
