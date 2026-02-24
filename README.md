@@ -152,3 +152,4 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets
 - **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
+- **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics

@@ -34,6 +34,35 @@ function useDebouncedCallback<A extends unknown[]>(
   );
 }
 
+type CadenceKey = "5m" | "15m" | "hourly";
+type CadenceConfigField = "pairMinEdgeCents5m" | "pairMinEdgeCents15m" | "pairMinEdgeCentsHourly";
+
+interface CadenceAutoTuneSuggestion {
+  key: CadenceKey;
+  label: string;
+  field: CadenceConfigField;
+  enabled: boolean;
+  current: number;
+  suggested: number;
+  delta: number;
+  confidence: "low" | "medium" | "high";
+  evaluated: number;
+  eligible: number;
+  executed: number;
+  edgeRejects: number;
+  rationale: string;
+}
+
+function clampEdgeCents(value: number): number {
+  return Math.round(Math.max(0, Math.min(50, value)) * 10) / 10;
+}
+
+function getConfidenceLabel(evaluated: number): "low" | "medium" | "high" {
+  if (evaluated >= 40) return "high";
+  if (evaluated >= 20) return "medium";
+  return "low";
+}
+
 interface Config {
   enabled: boolean;
   mode: "off" | "paper" | "live";
@@ -576,6 +605,96 @@ export default function Home() {
     .filter(Boolean)
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
+  const minSamplesForSuggestion = Math.max(8, Math.ceil(trendCount * 0.8));
+  const cadenceAutoSuggestions: CadenceAutoTuneSuggestion[] = [
+    {
+      key: "5m",
+      label: "5m",
+      field: "pairMinEdgeCents5m",
+      enabled: cfg.enableCadence5m,
+      current: cfg.pairMinEdgeCents5m,
+    },
+    {
+      key: "15m",
+      label: "15m",
+      field: "pairMinEdgeCents15m",
+      enabled: cfg.enableCadence15m,
+      current: cfg.pairMinEdgeCents15m,
+    },
+    {
+      key: "hourly",
+      label: "Hourly",
+      field: "pairMinEdgeCentsHourly",
+      enabled: cfg.enableCadenceHourly,
+      current: cfg.pairMinEdgeCentsHourly,
+    },
+  ].map((entry) => {
+    const evaluated = trendEvaluatedBreakdown.byCadence[entry.key];
+    const eligible = trendEligibleBreakdown.byCadence[entry.key];
+    const executed = trendExecutedBreakdown.byCadence[entry.key];
+    const edgeRejectKey = `edge_below_threshold_${entry.key}`;
+    const edgeRejects = Number(trendRejectedReasons[edgeRejectKey] ?? 0);
+    const passRate = evaluated > 0 ? eligible / evaluated : 0;
+    const execRate = evaluated > 0 ? executed / evaluated : 0;
+    const edgeRejectRate = evaluated > 0 ? edgeRejects / evaluated : 0;
+
+    let delta = 0;
+    let rationale = "Threshold looks balanced for current trend window.";
+
+    if (!entry.enabled) {
+      rationale = "Cadence is disabled in Trade controls.";
+    } else if (evaluated < minSamplesForSuggestion) {
+      rationale = `Need more samples for this cadence (${evaluated}/${minSamplesForSuggestion}).`;
+    } else if (edgeRejectRate >= 0.55 && execRate < 0.18) {
+      delta = -0.2;
+      rationale = "High edge-threshold rejections with low execution rate; loosen slightly.";
+    } else if (edgeRejectRate >= 0.35 && execRate < 0.28) {
+      delta = -0.1;
+      rationale = "Moderate threshold pressure; loosen a bit to admit more entries.";
+    } else if (edgeRejectRate <= 0.08 && execRate > 0.65 && trendAvgBudgetUsagePct > 92) {
+      delta = 0.2;
+      rationale = "Very high fill rate and budget pressure; tighten to improve selectivity.";
+    } else if (edgeRejectRate <= 0.15 && passRate > 0.5 && trendAvgBudgetUsagePct > 82) {
+      delta = 0.1;
+      rationale = "Healthy pass rate with elevated budget use; tighten modestly.";
+    }
+
+    const suggested = clampEdgeCents(entry.current + delta);
+    const normalizedDelta = clampEdgeCents(suggested - entry.current);
+    const confidence = entry.enabled ? getConfidenceLabel(evaluated) : "low";
+    return {
+      ...entry,
+      suggested,
+      delta: normalizedDelta,
+      confidence,
+      evaluated,
+      eligible,
+      executed,
+      edgeRejects,
+      rationale,
+    };
+  });
+  const suggestedEdgePatch = cadenceAutoSuggestions.reduce((acc, suggestion) => {
+    if (suggestion.enabled && Math.abs(suggestion.delta) >= 0.1) {
+      acc[suggestion.field] = suggestion.suggested;
+    }
+    return acc;
+  }, {} as Partial<Config>);
+  const suggestedEdgeChangeCount = Object.keys(suggestedEdgePatch).length;
+  const applySuggestedEdges = async () => {
+    if (suggestedEdgeChangeCount === 0) {
+      setRunResult("No cadence edge updates suggested for current trend window");
+      setTimeout(() => setRunResult(null), 4500);
+      return;
+    }
+    await updateConfig(suggestedEdgePatch, true);
+    setRunResult(
+      `Applied ${suggestedEdgeChangeCount} auto-tuned cadence edge threshold${
+        suggestedEdgeChangeCount === 1 ? "" : "s"
+      }`
+    );
+    setTimeout(() => setRunResult(null), 4500);
+  };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -1188,6 +1307,68 @@ export default function Home() {
                     5m {trendExecutedBreakdown.byCadence["5m"]} · 15m {trendExecutedBreakdown.byCadence["15m"]} ·
                     Hourly {trendExecutedBreakdown.byCadence.hourly}
                   </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800 p-3 mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                  <div>
+                    <p className="text-[11px] text-zinc-500 uppercase">Auto-tune suggestions</p>
+                    <p className="text-xs text-zinc-600">
+                      Suggests cadence thresholds from the selected trend window.
+                    </p>
+                  </div>
+                  <button
+                    onClick={applySuggestedEdges}
+                    disabled={saving || suggestedEdgeChangeCount === 0}
+                    className="px-3 py-1.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs disabled:opacity-40"
+                  >
+                    {suggestedEdgeChangeCount > 0
+                      ? `Apply suggested edges (${suggestedEdgeChangeCount})`
+                      : "No changes suggested"}
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {cadenceAutoSuggestions.map((suggestion) => (
+                    <div
+                      key={suggestion.key}
+                      className="rounded-md bg-zinc-900/80 border border-zinc-800 px-2 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-zinc-300">
+                          {suggestion.label}: {suggestion.current.toFixed(1)}¢ -> {suggestion.suggested.toFixed(1)}¢{" "}
+                          <span
+                            className={
+                              suggestion.delta > 0
+                                ? "text-amber-300"
+                                : suggestion.delta < 0
+                                  ? "text-sky-300"
+                                  : "text-zinc-500"
+                            }
+                          >
+                            ({suggestion.delta > 0 ? "+" : ""}
+                            {suggestion.delta.toFixed(1)}¢)
+                          </span>
+                        </span>
+                        <span
+                          className={
+                            suggestion.confidence === "high"
+                              ? "text-emerald-300"
+                              : suggestion.confidence === "medium"
+                                ? "text-sky-300"
+                                : "text-zinc-500"
+                          }
+                        >
+                          {suggestion.confidence} confidence
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Eval {suggestion.evaluated} · Eligible {suggestion.eligible} · Executed{" "}
+                        {suggestion.executed} · Edge rejects {suggestion.edgeRejects}
+                      </p>
+                      <p className="text-xs text-zinc-600 mt-0.5">{suggestion.rationale}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
 
