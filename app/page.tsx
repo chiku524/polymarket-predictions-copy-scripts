@@ -40,6 +40,9 @@ interface Config {
   walletUsagePercent: number;
   pairChunkUsd: number;
   pairMinEdgeCents: number;
+  pairMinEdgeCents5m: number;
+  pairMinEdgeCents15m: number;
+  pairMinEdgeCentsHourly: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
   enableBtc: boolean;
@@ -392,6 +395,9 @@ export default function Home() {
           walletUsagePercent: 25,
           pairChunkUsd: 3,
           pairMinEdgeCents: 0.5,
+          pairMinEdgeCents5m: 0.5,
+          pairMinEdgeCents15m: 0.5,
+          pairMinEdgeCentsHourly: 0.5,
           pairLookbackSeconds: 120,
           pairMaxMarketsPerRun: 4,
           enableBtc: true,
@@ -441,6 +447,9 @@ export default function Home() {
     walletUsagePercent: 25,
     pairChunkUsd: 3,
     pairMinEdgeCents: 0.5,
+    pairMinEdgeCents5m: 0.5,
+    pairMinEdgeCents15m: 0.5,
+    pairMinEdgeCentsHourly: 0.5,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
     enableBtc: true,
@@ -566,6 +575,7 @@ export default function Home() {
   ]
     .filter(Boolean)
     .join(", ") || "None";
+  const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -662,11 +672,11 @@ export default function Home() {
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
+            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Default min edge (cents)</p>
               <input
                 type="number"
                 min={0}
@@ -676,6 +686,67 @@ export default function Home() {
                 onChange={(e) =>
                   handleNumericConfigChange(
                     "pairMinEdgeCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    50
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Fallback when cadence-specific values are unavailable</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">5m min edge (cents)</p>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                step={0.1}
+                value={cfg.pairMinEdgeCents5m}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairMinEdgeCents5m",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    50
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">15m min edge (cents)</p>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                step={0.1}
+                value={cfg.pairMinEdgeCents15m}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairMinEdgeCents15m",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    50
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Hourly min edge (cents)</p>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                step={0.1}
+                value={cfg.pairMinEdgeCentsHourly}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairMinEdgeCentsHourly",
                     parseFloat(e.target.value) || 0,
                     0,
                     50

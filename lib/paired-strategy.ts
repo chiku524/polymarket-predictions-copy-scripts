@@ -96,6 +96,12 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function toEdge(value: unknown, fallbackCents = 0): number {
+  const centsRaw = Number(value);
+  const cents = Number.isFinite(centsRaw) ? centsRaw : fallbackCents;
+  return Math.max(0, Math.min(50, cents)) / 100;
+}
+
 function bumpReason(map: Record<string, number>, reason: string) {
   map[reason] = (map[reason] ?? 0) + 1;
 }
@@ -365,6 +371,9 @@ export async function runPairedStrategy(
     stopLossBalance: number;
     floorToPolymarketMin: boolean;
     pairMinEdgeCents: number;
+    pairMinEdgeCents5m: number;
+    pairMinEdgeCents15m: number;
+    pairMinEdgeCentsHourly: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
     enableBtc: boolean;
@@ -420,7 +429,13 @@ export async function runPairedStrategy(
     return result;
   }
 
-  const minEdge = Math.max(0, Number(config.pairMinEdgeCents) || 0) / 100;
+  const defaultMinEdge = toEdge(config.pairMinEdgeCents, 0);
+  const minEdgeByCadence: Record<PairCadence, number> = {
+    "5m": toEdge(config.pairMinEdgeCents5m, defaultMinEdge * 100),
+    "15m": toEdge(config.pairMinEdgeCents15m, defaultMinEdge * 100),
+    hourly: toEdge(config.pairMinEdgeCentsHourly, defaultMinEdge * 100),
+    other: defaultMinEdge,
+  };
   const lookbackSeconds = Math.max(20, Number(config.pairLookbackSeconds) || 120);
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
@@ -489,8 +504,13 @@ export async function runPairedStrategy(
       reject("insufficient_remaining_budget");
       break;
     }
-    if (signal.edge < minEdge) {
-      reject("edge_below_threshold");
+    const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
+    if (signal.edge < signalMinEdge) {
+      reject(
+        signal.cadence === "other"
+          ? "edge_below_threshold"
+          : `edge_below_threshold_${signal.cadence}`
+      );
       continue;
     }
     if (signal.latestTimestamp <= state.lastTimestamp) {

@@ -25,6 +25,12 @@ export interface CopyTraderConfig {
   pairChunkUsd: number;
   /** Minimum required edge in cents (1 - (pA + pB)) */
   pairMinEdgeCents: number;
+  /** Min edge for 5m cadence signals */
+  pairMinEdgeCents5m: number;
+  /** Min edge for 15m cadence signals */
+  pairMinEdgeCents15m: number;
+  /** Min edge for hourly cadence signals */
+  pairMinEdgeCentsHourly: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
@@ -136,6 +142,9 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxBetUsd: 3,
   pairChunkUsd: 3,
   pairMinEdgeCents: 0.5,
+  pairMinEdgeCents5m: 0.5,
+  pairMinEdgeCents15m: 0.5,
+  pairMinEdgeCentsHourly: 0.5,
   pairLookbackSeconds: 120,
   pairMaxMarketsPerRun: 4,
   enableBtc: true,
@@ -254,6 +263,21 @@ function sanitizeConfig(
       0,
       50
     ),
+    pairMinEdgeCents5m: clamp(
+      toFiniteNumber(raw.pairMinEdgeCents5m, current.pairMinEdgeCents5m),
+      0,
+      50
+    ),
+    pairMinEdgeCents15m: clamp(
+      toFiniteNumber(raw.pairMinEdgeCents15m, current.pairMinEdgeCents15m),
+      0,
+      50
+    ),
+    pairMinEdgeCentsHourly: clamp(
+      toFiniteNumber(raw.pairMinEdgeCentsHourly, current.pairMinEdgeCentsHourly),
+      0,
+      50
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -302,6 +326,21 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     maxBetUsd: c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd,
     pairChunkUsd: c.pairChunkUsd ?? c.maxBetUsd ?? DEFAULT_CONFIG.pairChunkUsd,
     pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,
+    pairMinEdgeCents5m:
+      c.pairMinEdgeCents5m ??
+      c.pairMinEdge5m ??
+      c.pairMinEdgeCents ??
+      DEFAULT_CONFIG.pairMinEdgeCents5m,
+    pairMinEdgeCents15m:
+      c.pairMinEdgeCents15m ??
+      c.pairMinEdge15m ??
+      c.pairMinEdgeCents ??
+      DEFAULT_CONFIG.pairMinEdgeCents15m,
+    pairMinEdgeCentsHourly:
+      c.pairMinEdgeCentsHourly ??
+      c.pairMinEdgeHourly ??
+      c.pairMinEdgeCents ??
+      DEFAULT_CONFIG.pairMinEdgeCentsHourly,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:

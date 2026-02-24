@@ -150,4 +150,5 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 - **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
 - **Coins**: enable/disable `BTC` and `ETH` independently
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets
+- **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
