@@ -91,6 +91,25 @@ interface Config {
   maxDailyDrawdownUsd: number;
 }
 
+const PAPER_BASELINE_PRESET: Partial<Config> = {
+  mode: "paper",
+  walletUsagePercent: 10,
+  pairChunkUsd: 1,
+  pairLookbackSeconds: 180,
+  pairMaxMarketsPerRun: 3,
+  pairMinEdgeCents: 0.6,
+  pairMinEdgeCents5m: 0.6,
+  pairMinEdgeCents15m: 0.6,
+  pairMinEdgeCentsHourly: 0.6,
+  enableBtc: true,
+  enableEth: true,
+  enableCadence5m: true,
+  enableCadence15m: true,
+  enableCadenceHourly: true,
+  minBetUsd: 0.1,
+  floorToPolymarketMin: true,
+};
+
 interface StrategyBreakdown {
   byCoin: {
     BTC: number;
@@ -750,6 +769,12 @@ export default function Home() {
     setTimeout(() => setRunResult(null), 4500);
   };
 
+  const applyPaperBaselinePreset = async () => {
+    await updateConfig(PAPER_BASELINE_PRESET, true);
+    setRunResult("Applied Paper baseline preset (mode Paper, 10% wallet cap, $1 pair chunk)");
+    setTimeout(() => setRunResult(null), 4500);
+  };
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="max-w-2xl mx-auto p-6 md:p-8">
@@ -861,7 +886,16 @@ export default function Home() {
 
         {/* Settings */}
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Trade controls</h2>
+            <button
+              onClick={applyPaperBaselinePreset}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
+            >
+              Apply paper baseline preset
+            </button>
+          </div>
           <p className="text-sm text-zinc-400 mb-4">
             Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>, daily caps <strong>{dailyCapSummary}</strong>.
           </p>
