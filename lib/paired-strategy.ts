@@ -6,6 +6,9 @@ const DATA_API = "https://data-api.polymarket.com";
 const CLOB_HOST = "https://clob.polymarket.com";
 const CHAIN_ID = 137;
 const POLYMARKET_MIN_ORDER_USD = 1;
+const MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
+const UNWIND_SELL_SLIPPAGE = 0.03;
+const UNWIND_SHARE_BUFFER = 0.99;
 
 type TradingMode = "off" | "paper" | "live";
 type PairCoin = "BTC" | "ETH";
@@ -100,6 +103,29 @@ function toEdge(value: unknown, fallbackCents = 0): number {
   const centsRaw = Number(value);
   const cents = Number.isFinite(centsRaw) ? centsRaw : fallbackCents;
   return Math.max(0, Math.min(50, cents)) / 100;
+}
+
+function clipError(current: string | undefined, message: string): string {
+  const next = current ? `${current}; ${message}` : message;
+  return next.length > 500 ? `${next.slice(0, 497)}...` : next;
+}
+
+function responseOk(resp: unknown): boolean {
+  return !!(resp && typeof resp === "object" && "success" in resp && (resp as { success?: unknown }).success);
+}
+
+function responseError(resp: unknown, fallback: string): string {
+  if (!resp || typeof resp !== "object") return fallback;
+  const r = resp as { errorMsg?: unknown; message?: unknown; error?: unknown; status?: unknown };
+  if (typeof r.errorMsg === "string" && r.errorMsg.trim()) return r.errorMsg;
+  if (typeof r.message === "string" && r.message.trim()) return r.message;
+  if (typeof r.error === "string" && r.error.trim()) return r.error;
+  if (r.error && typeof r.error === "object") {
+    const serial = JSON.stringify(r.error);
+    if (serial) return serial.slice(0, 160);
+  }
+  if (typeof r.status === "number") return `HTTP ${r.status}`;
+  return fallback;
 }
 
 function bumpReason(map: Record<string, number>, reason: string) {
@@ -494,6 +520,7 @@ export async function runPairedStrategy(
   }
 
   let lastTimestamp = state.lastTimestamp;
+  let unresolvedImbalances = 0;
 
   for (const signal of signals) {
     if (result.eligibleSignals >= maxMarketsPerRun) {
@@ -592,72 +619,138 @@ export async function runPairedStrategy(
       continue;
     }
 
-    try {
-      if (!client) throw new Error("Missing CLOB client in live mode");
-      const respA = await client.createAndPostMarketOrder(
-        {
-          tokenID: outcomeA.asset,
-          amount: legAUsd,
-          side: Side.BUY,
-          orderType: OrderType.FOK,
-          price: Math.max(0.001, Math.min(0.999, outcomeA.price)),
-        },
-        undefined,
-        OrderType.FOK
-      );
-      const respB = await client.createAndPostMarketOrder(
-        {
-          tokenID: outcomeB.asset,
-          amount: legBUsd,
-          side: Side.BUY,
-          orderType: OrderType.FOK,
-          price: Math.max(0.001, Math.min(0.999, outcomeB.price)),
-        },
-        undefined,
-        OrderType.FOK
-      );
-      const okA = !!respA?.success;
-      const okB = !!respB?.success;
-      if (okA && okB) {
-        copiedSet.add(signalKey);
-        result.copied++;
-        bumpBreakdown(result.executedBreakdown, signal);
-        remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
-        lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
-        result.copiedTrades.push({
-          title: signal.title,
-          outcome: outcomeA.outcome,
-          side: `BUY (${signal.coin} pair)`,
-          amountUsd: legAUsd,
-          price: outcomeA.price,
-          asset: outcomeA.asset,
-          timestamp: Date.now(),
-        });
-        result.copiedTrades.push({
-          title: signal.title,
-          outcome: outcomeB.outcome,
-          side: `BUY (${signal.coin} pair)`,
-          amountUsd: legBUsd,
-          price: outcomeB.price,
-          asset: outcomeB.asset,
-          timestamp: Date.now(),
-        });
-      } else {
-        result.failed++;
-        reject("live_order_rejected");
-        const errorA = respA?.errorMsg ?? "legA failed";
-        const errorB = respB?.errorMsg ?? "legB failed";
-        const next = result.error
-          ? `${result.error}; ${errorA}; ${errorB}`
-          : `${errorA}; ${errorB}`;
-        result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
-      }
-    } catch (e) {
+    if (!client) {
       result.failed++;
-      reject("live_order_exception");
-      const errStr = e instanceof Error ? e.message : String(e);
-      const next = result.error ? `${result.error}; ${errStr}` : errStr;
-      result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
+      reject("missing_clob_client_live");
+      result.error = clipError(result.error, "Missing CLOB client in live mode");
+      continue;
+    }
+
+    const recordLivePair = () => {
+      copiedSet.add(signalKey);
+      result.copied++;
+      bumpBreakdown(result.executedBreakdown, signal);
+      remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
+      lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
+      result.copiedTrades.push({
+        title: signal.title,
+        outcome: outcomeA.outcome,
+        side: `BUY (${signal.coin} pair)`,
+        amountUsd: legAUsd,
+        price: outcomeA.price,
+        asset: outcomeA.asset,
+        timestamp: Date.now(),
+      });
+      result.copiedTrades.push({
+        title: signal.title,
+        outcome: outcomeB.outcome,
+        side: `BUY (${signal.coin} pair)`,
+        amountUsd: legBUsd,
+        price: outcomeB.price,
+        asset: outcomeB.asset,
+        timestamp: Date.now(),
+      });
+    };
+
+    const placeBuyLeg = async (
+      tokenID: string,
+      amountUsd: number,
+      quotePrice: number
+    ): Promise<{ ok: boolean; error: string }> => {
+      try {
+        const resp = await client.createAndPostMarketOrder(
+          {
+            tokenID,
+            amount: amountUsd,
+            side: Side.BUY,
+            orderType: OrderType.FOK,
+            price: Math.max(0.001, Math.min(0.999, quotePrice)),
+          },
+          undefined,
+          OrderType.FOK
+        );
+        if (responseOk(resp)) return { ok: true, error: "" };
+        return { ok: false, error: responseError(resp, "BUY leg rejected") };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    };
+
+    const placeUnwindSell = async (
+      tokenID: string,
+      shareAmount: number,
+      minPrice: number
+    ): Promise<{ ok: boolean; error: string }> => {
+      try {
+        const resp = await client.createAndPostMarketOrder(
+          {
+            tokenID,
+            amount: shareAmount,
+            side: Side.SELL,
+            price: Math.max(0.01, Math.min(0.99, minPrice)),
+            orderType: OrderType.FOK,
+          },
+          undefined,
+          OrderType.FOK
+        );
+        if (responseOk(resp)) return { ok: true, error: "" };
+        return { ok: false, error: responseError(resp, "Unwind sell rejected") };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    };
+
+    const legA = await placeBuyLeg(outcomeA.asset, legAUsd, outcomeA.price);
+    if (!legA.ok) {
+      result.failed++;
+      reject("live_leg_a_rejected");
+      result.error = clipError(result.error, legA.error || "Leg A rejected");
+      continue;
+    }
+
+    const legB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
+    if (legB.ok) {
+      recordLivePair();
+      continue;
+    }
+
+    reject("live_partial_fill_detected");
+    const retryB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
+    if (retryB.ok) {
+      reject("live_partial_recovered_leg_b_retry");
+      recordLivePair();
+      continue;
+    }
+
+    const estimatedLegAShares =
+      (legAUsd / Math.max(0.001, outcomeA.price)) * UNWIND_SHARE_BUFFER;
+    const unwindMinPrice = Math.max(0.01, outcomeA.price - UNWIND_SELL_SLIPPAGE);
+    const unwind = await placeUnwindSell(
+      outcomeA.asset,
+      Math.max(0.1, estimatedLegAShares),
+      unwindMinPrice
+    );
+    if (unwind.ok) {
+      result.failed++;
+      reject("live_partial_unwound_leg_a");
+      result.error = clipError(
+        result.error,
+        `Leg B failed and retry failed (${legB.error}; ${retryB.error}); unwind of leg A succeeded`
+      );
+      continue;
+    }
+
+    unresolvedImbalances++;
+    result.failed++;
+    reject("live_partial_unwind_failed");
+    result.error = clipError(
+      result.error,
+      `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${MAX_UNRESOLVED_IMBALANCES_PER_RUN}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
+    );
+    if (unresolvedImbalances >= MAX_UNRESOLVED_IMBALANCES_PER_RUN) {
+      reject("circuit_breaker_unresolved_imbalance");
+      result.error = clipError(result.error, "Circuit breaker tripped due to unresolved imbalance");
+      break;
     }
   }
 
