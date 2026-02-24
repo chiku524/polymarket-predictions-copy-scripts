@@ -11,12 +11,22 @@ import {
 } from "@/lib/kv";
 import { runPairedStrategy } from "@/lib/paired-strategy";
 import { claimWinnings } from "@/lib/claim";
+import { getCashBalance } from "@/lib/copy-trade";
+import { sendAlert } from "@/lib/alerts";
+import {
+  applyDailyLiveRun,
+  attemptResolveSafetyLatch,
+  evaluateDailyRiskCaps,
+  initDailyRiskState,
+  shouldSendLatchAlert,
+} from "@/lib/live-safety";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 const CLAIM_EVERY_N_RUNS = Math.max(1, parseInt(process.env.CLAIM_EVERY_N_RUNS ?? "10", 10));
+const LATCH_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
 export const maxDuration = 90;
 
@@ -37,7 +47,98 @@ async function runCopyTradeHandler() {
       return NextResponse.json({ error: "PRIVATE_KEY not configured for Live mode" }, { status: 500 });
     }
 
-    const state = await getState();
+    let state = await getState();
+    let dailyRisk = state.dailyRisk;
+
+    if (config.mode === "live") {
+      const liveCashBalance = await getCashBalance(MY_ADDRESS).catch(() => 0);
+      dailyRisk = initDailyRiskState(state.dailyRisk, liveCashBalance);
+      const dailyCheck = evaluateDailyRiskCaps({
+        dailyRisk,
+        cashBalance: liveCashBalance,
+        maxDailyLiveNotionalUsd: config.maxDailyLiveNotionalUsd,
+        maxDailyDrawdownUsd: config.maxDailyDrawdownUsd,
+      });
+      dailyRisk = dailyCheck.dailyRisk;
+      if (dailyCheck.blocked) {
+        const now = Date.now();
+        await setState({
+          lastRunAt: now,
+          lastError: dailyCheck.message,
+          dailyRisk,
+        });
+        if (dailyCheck.shouldAlert) {
+          await sendAlert({
+            title: `Live run blocked: ${dailyCheck.reason}`,
+            severity: "critical",
+            details: {
+              drawdownUsd: dailyCheck.drawdownUsd,
+              maxDailyLiveNotionalUsd: config.maxDailyLiveNotionalUsd,
+              maxDailyDrawdownUsd: config.maxDailyDrawdownUsd,
+              dailyRisk,
+            },
+          });
+        }
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          reason: dailyCheck.reason,
+          error: dailyCheck.message,
+        });
+      }
+
+      if (state.safetyLatch?.active) {
+        const latchAttempt = await attemptResolveSafetyLatch({
+          latch: state.safetyLatch,
+          privateKey: livePrivateKey,
+          myAddress: MY_ADDRESS,
+          signatureType: SIGNATURE_TYPE,
+          unwindSellSlippageCents: config.unwindSellSlippageCents,
+          unwindShareBufferPct: config.unwindShareBufferPct,
+        });
+        const now = Date.now();
+        const shouldAlert = shouldSendLatchAlert(state.safetyLatch, now, LATCH_ALERT_COOLDOWN_MS);
+        const latchReason = latchAttempt.resolved
+          ? `${latchAttempt.message}. Manual reset required to resume live runs.`
+          : latchAttempt.message;
+        const updatedLatch = {
+          ...state.safetyLatch,
+          active: true,
+          reason: latchReason,
+          unresolvedAssets: latchAttempt.remainingAssets,
+          attempts: (state.safetyLatch.attempts ?? 0) + 1,
+          lastAttemptAt: now,
+          lastAlertAt: shouldAlert ? now : state.safetyLatch.lastAlertAt,
+        };
+        await setState({
+          lastRunAt: now,
+          lastError: latchReason,
+          safetyLatch: updatedLatch,
+          dailyRisk,
+        });
+        if (shouldAlert) {
+          await sendAlert({
+            title: "Safety latch active before worker live run",
+            severity: latchAttempt.resolved ? "warning" : "critical",
+            details: {
+              attemptedAssets: latchAttempt.attemptedAssets,
+              resolvedAssets: latchAttempt.resolvedAssets,
+              failedAssets: latchAttempt.failedAssets,
+              remainingAssets: latchAttempt.remainingAssets,
+              attempts: updatedLatch.attempts,
+              latchReason,
+            },
+          });
+        }
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          reason: "safety_latch_active",
+          error: latchReason,
+        });
+      }
+    }
+
     const result = await runPairedStrategy(
       livePrivateKey,
       MY_ADDRESS,
@@ -87,15 +188,60 @@ async function runCopyTradeHandler() {
       error: result.error,
       timestamp: Date.now(),
     };
+    const now = Date.now();
+    let safetyLatch = state.safetyLatch;
+    if (
+      config.mode === "live" &&
+      (result.rejectedReasons["circuit_breaker_unresolved_imbalance"] ?? 0) > 0
+    ) {
+      safetyLatch = {
+        active: true,
+        reason: result.error ?? "Circuit breaker tripped due to unresolved imbalance",
+        triggeredAt: now,
+        unresolvedAssets: result.unresolvedExposureAssets,
+        attempts: 0,
+      };
+      await sendAlert({
+        title: "Live circuit breaker tripped",
+        severity: "critical",
+        details: {
+          unresolvedAssets: result.unresolvedExposureAssets,
+          rejectedReasons: result.rejectedReasons,
+          error: result.error,
+        },
+      });
+    }
+    if (config.mode === "live" && result.failed >= 3) {
+      await sendAlert({
+        title: "Live worker run had repeated failed orders",
+        severity: "warning",
+        details: {
+          failed: result.failed,
+          copied: result.copied,
+          error: result.error,
+          rejectedReasons: result.rejectedReasons,
+        },
+      });
+    }
+    const nextDailyRisk =
+      config.mode === "live"
+        ? applyDailyLiveRun(
+            dailyRisk ?? initDailyRiskState(state.dailyRisk, await getCashBalance(MY_ADDRESS).catch(() => 0), now),
+            result.budgetUsedUsd,
+            now
+          )
+        : state.dailyRisk;
 
     const stateUpdate: Parameters<typeof setState>[0] = {
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
       copiedKeys: result.copiedKeys.length > 0 ? result.copiedKeys : state.copiedKeys,
-      lastRunAt: Date.now(),
-      lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
+      lastRunAt: now,
+      lastCopiedAt: result.copied > 0 ? now : state.lastCopiedAt,
       lastError: result.error,
       lastStrategyDiagnostics: diagnostics,
       runsSinceLastClaim: shouldClaim ? 0 : runsSinceLastClaim,
+      dailyRisk: nextDailyRisk,
+      safetyLatch,
     };
 
     let claimResult: { claimed: number; failed: number } | undefined;

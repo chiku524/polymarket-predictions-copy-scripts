@@ -57,6 +57,30 @@ export interface CopyTraderConfig {
   unwindSellSlippageCents: number;
   /** Fraction of estimated shares to unwind (percent) */
   unwindShareBufferPct: number;
+  /** Max total live notional per UTC day (0 = disabled) */
+  maxDailyLiveNotionalUsd: number;
+  /** Max drawdown from UTC-day starting balance (0 = disabled) */
+  maxDailyDrawdownUsd: number;
+}
+
+export interface SafetyLatchState {
+  active: boolean;
+  reason: string;
+  triggeredAt: number;
+  unresolvedAssets: string[];
+  attempts: number;
+  lastAttemptAt?: number;
+  lastAlertAt?: number;
+}
+
+export interface DailyRiskState {
+  dayKey: string;
+  dayStartBalanceUsd: number;
+  liveNotionalUsd: number;
+  liveRuns: number;
+  lastRunAt?: number;
+  alertedNotionalCap?: boolean;
+  alertedDrawdownCap?: boolean;
 }
 
 export interface CopyTraderState {
@@ -70,6 +94,8 @@ export interface CopyTraderState {
   runsSinceLastClaim?: number;
   lastClaimAt?: number;
   lastClaimResult?: { claimed: number; failed: number };
+  safetyLatch?: SafetyLatchState;
+  dailyRisk?: DailyRiskState;
 }
 
 export interface StrategyDiagnostics {
@@ -164,6 +190,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxUnresolvedImbalancesPerRun: 1,
   unwindSellSlippageCents: 3,
   unwindShareBufferPct: 99,
+  maxDailyLiveNotionalUsd: 0,
+  maxDailyDrawdownUsd: 0,
 };
 
 const DEFAULT_PAPER_STATS: PaperStats = {
@@ -225,6 +253,43 @@ function normalizeRejectedReasons(value: unknown): Record<string, number> {
     result[key] = count;
   }
   return result;
+}
+
+function normalizeSafetyLatch(value: unknown): SafetyLatchState | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const active = raw.active !== false;
+  const unresolvedAssets = Array.isArray(raw.unresolvedAssets)
+    ? raw.unresolvedAssets
+        .map((a) => String(a ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+  return {
+    active,
+    reason: typeof raw.reason === "string" ? raw.reason : "Safety latch active",
+    triggeredAt: Math.max(0, toFiniteNumber(raw.triggeredAt, Date.now())),
+    unresolvedAssets,
+    attempts: Math.max(0, Math.floor(toFiniteNumber(raw.attempts, 0))),
+    lastAttemptAt: raw.lastAttemptAt ? toFiniteNumber(raw.lastAttemptAt, Date.now()) : undefined,
+    lastAlertAt: raw.lastAlertAt ? toFiniteNumber(raw.lastAlertAt, Date.now()) : undefined,
+  };
+}
+
+function normalizeDailyRisk(value: unknown): DailyRiskState | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const dayKey = typeof raw.dayKey === "string" ? raw.dayKey : "";
+  if (!dayKey) return undefined;
+  return {
+    dayKey,
+    dayStartBalanceUsd: Math.max(0, toFiniteNumber(raw.dayStartBalanceUsd, 0)),
+    liveNotionalUsd: Math.max(0, toFiniteNumber(raw.liveNotionalUsd, 0)),
+    liveRuns: Math.max(0, Math.floor(toFiniteNumber(raw.liveRuns, 0))),
+    lastRunAt: raw.lastRunAt ? toFiniteNumber(raw.lastRunAt, Date.now()) : undefined,
+    alertedNotionalCap: raw.alertedNotionalCap === true,
+    alertedDrawdownCap: raw.alertedDrawdownCap === true,
+  };
 }
 
 function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
@@ -326,6 +391,16 @@ function sanitizeConfig(
       50,
       100
     ),
+    maxDailyLiveNotionalUsd: clamp(
+      toFiniteNumber(raw.maxDailyLiveNotionalUsd, current.maxDailyLiveNotionalUsd),
+      0,
+      10000000
+    ),
+    maxDailyDrawdownUsd: clamp(
+      toFiniteNumber(raw.maxDailyDrawdownUsd, current.maxDailyDrawdownUsd),
+      0,
+      10000000
+    ),
   };
 }
 
@@ -393,6 +468,16 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.unwindBufferPct ??
       c.unwindBufferPercent ??
       DEFAULT_CONFIG.unwindShareBufferPct,
+    maxDailyLiveNotionalUsd:
+      c.maxDailyLiveNotionalUsd ??
+      c.maxDailyNotionalUsd ??
+      c.dailyNotionalCapUsd ??
+      DEFAULT_CONFIG.maxDailyLiveNotionalUsd,
+    maxDailyDrawdownUsd:
+      c.maxDailyDrawdownUsd ??
+      c.dailyDrawdownCapUsd ??
+      c.maxDailyLossUsd ??
+      DEFAULT_CONFIG.maxDailyDrawdownUsd,
   };
 
   return sanitizeConfig(
@@ -423,6 +508,8 @@ export async function getState(): Promise<CopyTraderState> {
         runsSinceLastClaim: s.runsSinceLastClaim ?? 0,
         lastClaimAt: s.lastClaimAt,
         lastClaimResult: s.lastClaimResult,
+        safetyLatch: normalizeSafetyLatch(s.safetyLatch),
+        dailyRisk: normalizeDailyRisk(s.dailyRisk),
       }
     : { lastTimestamp: 0, copiedKeys: [] };
 }
@@ -434,7 +521,14 @@ export async function setState(state: Partial<CopyTraderState>): Promise<void> {
 }
 
 export async function resetSyncState(): Promise<void> {
-  await kv.set(STATE_KEY, { lastTimestamp: 0, copiedKeys: [], lastStrategyDiagnostics: undefined });
+  const current = await getState();
+  await kv.set(STATE_KEY, {
+    ...current,
+    lastTimestamp: 0,
+    copiedKeys: [],
+    lastStrategyDiagnostics: undefined,
+    safetyLatch: undefined,
+  });
 }
 
 export async function getRecentActivity(): Promise<RecentActivity[]> {

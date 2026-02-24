@@ -90,6 +90,7 @@ export interface PairedStrategyResult {
   executedBreakdown: SignalBreakdown;
   error?: string;
   lastTimestamp?: number;
+  unresolvedExposureAssets: string[];
   copiedKeys: string[];
   copiedTrades: CopiedTrade[];
 }
@@ -428,6 +429,7 @@ export async function runPairedStrategy(
     evaluatedBreakdown: emptyBreakdown(),
     eligibleBreakdown: emptyBreakdown(),
     executedBreakdown: emptyBreakdown(),
+    unresolvedExposureAssets: [],
     copiedKeys: [],
     copiedTrades: [],
   };
@@ -772,6 +774,9 @@ export async function runPairedStrategy(
     unresolvedImbalances++;
     result.failed++;
     reject("live_partial_unwind_failed");
+    if (!result.unresolvedExposureAssets.includes(outcomeA.asset)) {
+      result.unresolvedExposureAssets.push(outcomeA.asset);
+    }
     result.error = clipError(
       result.error,
       `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`

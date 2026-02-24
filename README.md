@@ -154,3 +154,6 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
 - **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics
 - **Live safety guardrails**: configurable `max unresolved imbalances/run`, `unwind slippage`, and `unwind share buffer` for one-leg recovery
+- **Daily live risk caps**: configurable max daily notional and max daily drawdown hard-stops
+- **Safety latch preflight**: attempts to unwind prior unresolved exposure before allowing new live entries
+- **Alert webhook (optional)**: set `ALERT_WEBHOOK_URL` (and optional `ALERT_WEBHOOK_TOKEN`) for critical safety notifications

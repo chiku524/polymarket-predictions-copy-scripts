@@ -14,7 +14,7 @@ export async function POST() {
     await resetSyncState();
     return NextResponse.json({
       ok: true,
-      message: "Strategy sync state reset. Next run will treat signals as fresh.",
+      message: "Strategy sync and safety latch reset. Next run will treat signals as fresh.",
     });
   } catch (e) {
     console.error("Reset error:", e);

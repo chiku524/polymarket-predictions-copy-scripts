@@ -32,6 +32,8 @@ export async function GET() {
         runsSinceLastClaim: state.runsSinceLastClaim,
         lastClaimAt: state.lastClaimAt,
         lastClaimResult: state.lastClaimResult,
+        safetyLatch: state.safetyLatch,
+        dailyRisk: state.dailyRisk,
       },
       cashBalance,
       recentActivity,

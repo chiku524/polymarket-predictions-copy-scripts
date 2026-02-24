@@ -87,6 +87,8 @@ interface Config {
   maxUnresolvedImbalancesPerRun: number;
   unwindSellSlippageCents: number;
   unwindShareBufferPct: number;
+  maxDailyLiveNotionalUsd: number;
+  maxDailyDrawdownUsd: number;
 }
 
 interface StrategyBreakdown {
@@ -130,6 +132,24 @@ interface Status {
     runsSinceLastClaim?: number;
     lastClaimAt?: number;
     lastClaimResult?: { claimed: number; failed: number };
+    safetyLatch?: {
+      active: boolean;
+      reason: string;
+      triggeredAt: number;
+      unresolvedAssets: string[];
+      attempts: number;
+      lastAttemptAt?: number;
+      lastAlertAt?: number;
+    };
+    dailyRisk?: {
+      dayKey: string;
+      dayStartBalanceUsd: number;
+      liveNotionalUsd: number;
+      liveRuns: number;
+      lastRunAt?: number;
+      alertedNotionalCap?: boolean;
+      alertedDrawdownCap?: boolean;
+    };
   };
   cashBalance: number;
   recentActivity: { title: string; outcome: string; side: string; amountUsd: number; price: number; timestamp: number }[];
@@ -294,6 +314,12 @@ export default function Home() {
           setRunResult("Skipped (mode is Off)");
         } else if (data.reason === "busy") {
           setRunResult("Skipped (another run is in progress)");
+        } else if (data.reason === "safety_latch_active") {
+          setRunResult("Skipped (safety latch active; resolve residual exposure first)");
+        } else if (data.reason === "daily_notional_cap") {
+          setRunResult("Skipped (daily live notional cap reached)");
+        } else if (data.reason === "daily_drawdown_cap") {
+          setRunResult("Skipped (daily drawdown cap reached)");
         } else {
           setRunResult("Skipped");
         }
@@ -444,6 +470,8 @@ export default function Home() {
           maxUnresolvedImbalancesPerRun: 1,
           unwindSellSlippageCents: 3,
           unwindShareBufferPct: 99,
+          maxDailyLiveNotionalUsd: 0,
+          maxDailyDrawdownUsd: 0,
         }),
         [field]: clamped,
       };
@@ -500,6 +528,8 @@ export default function Home() {
     maxUnresolvedImbalancesPerRun: 1,
     unwindSellSlippageCents: 3,
     unwindShareBufferPct: 99,
+    maxDailyLiveNotionalUsd: 0,
+    maxDailyDrawdownUsd: 0,
   };
   const activity = status?.recentActivity ?? [];
   const paperStats = status?.paperStats ?? {
@@ -615,6 +645,17 @@ export default function Home() {
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
   const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
+  const dailyCapSummary = `notional cap ${
+    cfg.maxDailyLiveNotionalUsd > 0 ? `$${cfg.maxDailyLiveNotionalUsd.toFixed(0)}` : "off"
+  } · drawdown cap ${
+    cfg.maxDailyDrawdownUsd > 0 ? `$${cfg.maxDailyDrawdownUsd.toFixed(0)}` : "off"
+  }`;
+  const safetyLatch = status?.state.safetyLatch;
+  const dailyRisk = status?.state.dailyRisk;
+  const currentBalanceUsd = status?.cashBalance ?? 0;
+  const dailyDrawdownUsd = dailyRisk
+    ? Math.max(0, (Number(dailyRisk.dayStartBalanceUsd) || 0) - currentBalanceUsd)
+    : 0;
   const minSamplesForSuggestion = Math.max(8, Math.ceil(trendCount * 0.8));
   const cadenceSuggestionInputs: Array<
     Pick<CadenceAutoTuneSuggestion, "key" | "label" | "field" | "enabled" | "current">
@@ -732,6 +773,24 @@ export default function Home() {
           </div>
         )}
 
+        {safetyLatch?.active && (
+          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-300 font-medium">
+              Safety latch is active (live trading blocked until resolved)
+            </p>
+            <p className="text-xs text-red-300/90 mt-1">{safetyLatch.reason}</p>
+            <p className="text-xs text-red-400/80 mt-1">
+              Triggered: {new Date(safetyLatch.triggeredAt).toLocaleString()} · Attempts: {safetyLatch.attempts}
+              {safetyLatch.unresolvedAssets?.length
+                ? ` · Assets: ${safetyLatch.unresolvedAssets.join(", ")}`
+                : ""}
+            </p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Use <strong>Reset sync</strong> only after you confirm residual exposure is resolved.
+            </p>
+          </div>
+        )}
+
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
           Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker or cron can call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> to run each cycle.
@@ -804,7 +863,7 @@ export default function Home() {
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>.
+            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>, daily caps <strong>{dailyCapSummary}</strong>.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
@@ -1036,6 +1095,48 @@ export default function Home() {
               <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
             </div>
             <div>
+              <p className="text-xs text-zinc-500 mb-1">Max daily live notional (USDC)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.maxDailyLiveNotionalUsd || ""}
+                placeholder="0 = disabled"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxDailyLiveNotionalUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Hard cap on cumulative live notional per UTC day</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max daily drawdown (USDC)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.maxDailyDrawdownUsd || ""}
+                placeholder="0 = disabled"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxDailyDrawdownUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Blocks live runs when day-start balance drawdown exceeds cap</p>
+            </div>
+            <div>
               <p className="text-xs text-zinc-500 mb-1">Max unresolved imbalances/run</p>
               <input
                 type="number"
@@ -1165,6 +1266,18 @@ export default function Home() {
               <p className="text-xs text-zinc-500 mt-0.5">Other cadences are ignored in Phase 1.</p>
             </div>
           </div>
+          {dailyRisk && (
+            <div className="mt-4 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase mb-1">Daily live risk window ({dailyRisk.dayKey})</p>
+              <p className="text-xs text-zinc-300">
+                Notional: ${dailyRisk.liveNotionalUsd.toFixed(2)}
+                {cfg.maxDailyLiveNotionalUsd > 0 ? ` / $${cfg.maxDailyLiveNotionalUsd.toFixed(2)}` : " (cap off)"} ·
+                Drawdown: ${dailyDrawdownUsd.toFixed(2)}
+                {cfg.maxDailyDrawdownUsd > 0 ? ` / $${cfg.maxDailyDrawdownUsd.toFixed(2)}` : " (cap off)"} ·
+                Live runs: {dailyRisk.liveRuns}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Paper analytics */}
