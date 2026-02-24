@@ -6,9 +6,9 @@ const DATA_API = "https://data-api.polymarket.com";
 const CLOB_HOST = "https://clob.polymarket.com";
 const CHAIN_ID = 137;
 const POLYMARKET_MIN_ORDER_USD = 1;
-const MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
-const UNWIND_SELL_SLIPPAGE = 0.03;
-const UNWIND_SHARE_BUFFER = 0.99;
+const DEFAULT_MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
+const DEFAULT_UNWIND_SELL_SLIPPAGE = 0.03;
+const DEFAULT_UNWIND_SHARE_BUFFER = 0.99;
 
 type TradingMode = "off" | "paper" | "live";
 type PairCoin = "BTC" | "ETH";
@@ -407,6 +407,9 @@ export async function runPairedStrategy(
     enableCadence5m: boolean;
     enableCadence15m: boolean;
     enableCadenceHourly: boolean;
+    maxUnresolvedImbalancesPerRun: number;
+    unwindSellSlippageCents: number;
+    unwindShareBufferPct: number;
   },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<PairedStrategyResult> {
@@ -471,6 +474,32 @@ export async function runPairedStrategy(
   const cadence5m = config.enableCadence5m !== false;
   const cadence15m = config.enableCadence15m !== false;
   const cadenceHourly = config.enableCadenceHourly !== false;
+  const maxUnresolvedImbalancesPerRun = Math.max(
+    1,
+    Math.min(
+      10,
+      Math.floor(
+        Number(config.maxUnresolvedImbalancesPerRun) ||
+          DEFAULT_MAX_UNRESOLVED_IMBALANCES_PER_RUN
+      )
+    )
+  );
+  const unwindSellSlippage = Math.max(
+    0,
+    Math.min(
+      0.2,
+      (Number(config.unwindSellSlippageCents) ||
+        DEFAULT_UNWIND_SELL_SLIPPAGE * 100) / 100
+    )
+  );
+  const unwindShareBuffer = Math.max(
+    0.5,
+    Math.min(
+      1,
+      (Number(config.unwindShareBufferPct) ||
+        DEFAULT_UNWIND_SHARE_BUFFER * 100) / 100
+    )
+  );
 
   if (!includeBtc && !includeEth) {
     result.error = "Both BTC and ETH are disabled";
@@ -723,8 +752,8 @@ export async function runPairedStrategy(
     }
 
     const estimatedLegAShares =
-      (legAUsd / Math.max(0.001, outcomeA.price)) * UNWIND_SHARE_BUFFER;
-    const unwindMinPrice = Math.max(0.01, outcomeA.price - UNWIND_SELL_SLIPPAGE);
+      (legAUsd / Math.max(0.001, outcomeA.price)) * unwindShareBuffer;
+    const unwindMinPrice = Math.max(0.01, outcomeA.price - unwindSellSlippage);
     const unwind = await placeUnwindSell(
       outcomeA.asset,
       Math.max(0.1, estimatedLegAShares),
@@ -745,9 +774,9 @@ export async function runPairedStrategy(
     reject("live_partial_unwind_failed");
     result.error = clipError(
       result.error,
-      `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${MAX_UNRESOLVED_IMBALANCES_PER_RUN}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
+      `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
     );
-    if (unresolvedImbalances >= MAX_UNRESOLVED_IMBALANCES_PER_RUN) {
+    if (unresolvedImbalances >= maxUnresolvedImbalancesPerRun) {
       reject("circuit_breaker_unresolved_imbalance");
       result.error = clipError(result.error, "Circuit breaker tripped due to unresolved imbalance");
       break;

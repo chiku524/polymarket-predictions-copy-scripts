@@ -153,4 +153,4 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 - **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
 - **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics
-- **Live safety guardrails**: one-leg fill recovery (retry + unwind) and unresolved-imbalance circuit breaker
+- **Live safety guardrails**: configurable `max unresolved imbalances/run`, `unwind slippage`, and `unwind share buffer` for one-leg recovery

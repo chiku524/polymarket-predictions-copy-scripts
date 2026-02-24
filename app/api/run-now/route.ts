@@ -67,6 +67,9 @@ export async function POST() {
         enableCadence5m: config.enableCadence5m,
         enableCadence15m: config.enableCadence15m,
         enableCadenceHourly: config.enableCadenceHourly,
+        maxUnresolvedImbalancesPerRun: config.maxUnresolvedImbalancesPerRun,
+        unwindSellSlippageCents: config.unwindSellSlippageCents,
+        unwindShareBufferPct: config.unwindShareBufferPct,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );

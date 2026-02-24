@@ -84,6 +84,9 @@ interface Config {
   minBetUsd: number;
   stopLossBalance: number;
   floorToPolymarketMin?: boolean;
+  maxUnresolvedImbalancesPerRun: number;
+  unwindSellSlippageCents: number;
+  unwindShareBufferPct: number;
 }
 
 interface StrategyBreakdown {
@@ -438,6 +441,9 @@ export default function Home() {
           maxBetUsd: 3,
           minBetUsd: 0.1,
           stopLossBalance: 0,
+          maxUnresolvedImbalancesPerRun: 1,
+          unwindSellSlippageCents: 3,
+          unwindShareBufferPct: 99,
         }),
         [field]: clamped,
       };
@@ -491,6 +497,9 @@ export default function Home() {
     minBetUsd: 0.1,
     stopLossBalance: 0,
     floorToPolymarketMin: true,
+    maxUnresolvedImbalancesPerRun: 1,
+    unwindSellSlippageCents: 3,
+    unwindShareBufferPct: 99,
   };
   const activity = status?.recentActivity ?? [];
   const paperStats = status?.paperStats ?? {
@@ -605,6 +614,7 @@ export default function Home() {
     .filter(Boolean)
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
+  const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
   const minSamplesForSuggestion = Math.max(8, Math.ceil(trendCount * 0.8));
   const cadenceSuggestionInputs: Array<
     Pick<CadenceAutoTuneSuggestion, "key" | "label" | "field" | "enabled" | "current">
@@ -794,7 +804,7 @@ export default function Home() {
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
+            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
@@ -1024,6 +1034,69 @@ export default function Home() {
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
               <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max unresolved imbalances/run</p>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                value={cfg.maxUnresolvedImbalancesPerRun}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxUnresolvedImbalancesPerRun",
+                    parseInt(e.target.value, 10) || 1,
+                    1,
+                    10
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Live circuit breaker threshold</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Unwind slippage (cents)</p>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={0.1}
+                value={cfg.unwindSellSlippageCents}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "unwindSellSlippageCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    20
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Price cushion used when unwinding failed pairs</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Unwind share buffer %</p>
+              <input
+                type="number"
+                min={50}
+                max={100}
+                step={1}
+                value={cfg.unwindShareBufferPct}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "unwindShareBufferPct",
+                    parseInt(e.target.value, 10) || 99,
+                    50,
+                    100
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Portion of estimated shares sent to unwind SELL</p>
             </div>
             <div className="min-w-[220px]">
               <p className="text-xs text-zinc-500 mb-1">Coins</p>

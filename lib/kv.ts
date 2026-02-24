@@ -51,6 +51,12 @@ export interface CopyTraderConfig {
   stopLossBalance: number;
   /** When true, round bets below $1 up to $1 (Polymarket min) to copy smaller target bets (default true) */
   floorToPolymarketMin: boolean;
+  /** Max unresolved one-leg imbalances allowed before circuit breaker halts run */
+  maxUnresolvedImbalancesPerRun: number;
+  /** SELL unwind price slippage tolerance in cents (probability points) */
+  unwindSellSlippageCents: number;
+  /** Fraction of estimated shares to unwind (percent) */
+  unwindShareBufferPct: number;
 }
 
 export interface CopyTraderState {
@@ -155,6 +161,9 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   minBetUsd: 0.1,
   stopLossBalance: 0,
   floorToPolymarketMin: true,
+  maxUnresolvedImbalancesPerRun: 1,
+  unwindSellSlippageCents: 3,
+  unwindShareBufferPct: 99,
 };
 
 const DEFAULT_PAPER_STATS: PaperStats = {
@@ -300,6 +309,23 @@ function sanitizeConfig(
       10000000
     ),
     floorToPolymarketMin: raw.floorToPolymarketMin !== false,
+    maxUnresolvedImbalancesPerRun: clamp(
+      Math.floor(
+        toFiniteNumber(raw.maxUnresolvedImbalancesPerRun, current.maxUnresolvedImbalancesPerRun)
+      ),
+      1,
+      10
+    ),
+    unwindSellSlippageCents: clamp(
+      toFiniteNumber(raw.unwindSellSlippageCents, current.unwindSellSlippageCents),
+      0,
+      20
+    ),
+    unwindShareBufferPct: clamp(
+      toFiniteNumber(raw.unwindShareBufferPct, current.unwindShareBufferPct),
+      50,
+      100
+    ),
   };
 }
 
@@ -353,6 +379,20 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     minBetUsd: c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd,
     stopLossBalance: c.stopLossBalance ?? DEFAULT_CONFIG.stopLossBalance,
     floorToPolymarketMin: c.floorToPolymarketMin,
+    maxUnresolvedImbalancesPerRun:
+      c.maxUnresolvedImbalancesPerRun ??
+      c.maxImbalancesPerRun ??
+      DEFAULT_CONFIG.maxUnresolvedImbalancesPerRun,
+    unwindSellSlippageCents:
+      c.unwindSellSlippageCents ??
+      c.unwindSlippageCents ??
+      c.unwindSlippage ??
+      DEFAULT_CONFIG.unwindSellSlippageCents,
+    unwindShareBufferPct:
+      c.unwindShareBufferPct ??
+      c.unwindBufferPct ??
+      c.unwindBufferPercent ??
+      DEFAULT_CONFIG.unwindShareBufferPct,
   };
 
   return sanitizeConfig(
