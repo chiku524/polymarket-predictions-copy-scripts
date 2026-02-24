@@ -606,7 +606,9 @@ export default function Home() {
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
   const minSamplesForSuggestion = Math.max(8, Math.ceil(trendCount * 0.8));
-  const cadenceAutoSuggestions: CadenceAutoTuneSuggestion[] = [
+  const cadenceSuggestionInputs: Array<
+    Pick<CadenceAutoTuneSuggestion, "key" | "label" | "field" | "enabled" | "current">
+  > = [
     {
       key: "5m",
       label: "5m",
@@ -628,7 +630,8 @@ export default function Home() {
       enabled: cfg.enableCadenceHourly,
       current: cfg.pairMinEdgeCentsHourly,
     },
-  ].map((entry) => {
+  ];
+  const cadenceAutoSuggestions: CadenceAutoTuneSuggestion[] = cadenceSuggestionInputs.map((entry) => {
     const evaluated = trendEvaluatedBreakdown.byCadence[entry.key];
     const eligible = trendEligibleBreakdown.byCadence[entry.key];
     const executed = trendExecutedBreakdown.byCadence[entry.key];
