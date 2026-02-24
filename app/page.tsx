@@ -1339,7 +1339,7 @@ export default function Home() {
                     >
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-zinc-300">
-                          {suggestion.label}: {suggestion.current.toFixed(1)}¢ -> {suggestion.suggested.toFixed(1)}¢{" "}
+                          {suggestion.label}: {suggestion.current.toFixed(1)}¢ {"->"} {suggestion.suggested.toFixed(1)}¢{" "}
                           <span
                             className={
                               suggestion.delta > 0
