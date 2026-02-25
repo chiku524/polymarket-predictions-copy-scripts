@@ -33,8 +33,7 @@ Both services can point to this same repo.
 
 For **web service**:
 - `PRIVATE_KEY` – Your wallet private key
-- `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
-- `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
+- `MY_ADDRESS` – Your Polymarket proxy/funder address
 - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
 - `CRON_SECRET` – shared secret used by worker when calling `/api/copy-trade`
 - optional claiming vars:
@@ -66,7 +65,7 @@ Requires Redis (set `REDIS_URL` locally).
 
 ### Persistent worker (recommended over cron)
 
-Instead of cron, you can run an always-on worker that continuously triggers `/api/copy-trade`.
+Instead of cron, you can run an always-on worker that continuously triggers the strategy run endpoint.
 
 1. Set env vars for the worker process:
    - `APP_BASE_URL` (e.g. `https://your-app-domain.com`)
@@ -95,79 +94,23 @@ To avoid duplicate triggers, run **either** cron **or** worker (not both).
 
 ---
 
-## Python Script (Standalone)
-
 ## Is This Doable?
 
 **Yes.** The public Polymarket API supports everything needed:
 
 | Need | API | Endpoint |
 |------|-----|----------|
-| Target user's trades | Data API | `GET /activity` |
 | Your cash balance | Data API | `GET /v1/accounting/snapshot` |
 | Place orders | CLOB API | `POST /order` (auth required) |
 
 Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/overview)
 
-## Setup
-
-1. **Install dependencies**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Create `.env`**
-
-   ```bash
-   cp config.example.env .env
-   ```
-
-3. **Edit `.env`**
-
-   - `PRIVATE_KEY` – Your wallet private key (from [reveal.polymarket.com](https://reveal.polymarket.com) or your wallet)
-   - `MY_ADDRESS` – Your Polymarket proxy/funder address (profile dropdown)
-   - `SIGNATURE_TYPE` – `0` EOA, `1` Email/Magic, `2` Browser wallet
-   - `TARGET_ADDRESS` – Address to copy (default: gabagool22’s proxy)
-
-## Run
-
-```bash
-python copy_trader.py
-```
-
-The script will:
-
-1. Sync to the target’s latest trades (no historical copies on first run)
-2. Poll every 15 seconds for new trades
-3. For each new trade, place a market order sized at 5–10% of your cash balance based on odds
-4. Use FOK (Fill-Or-Kill) orders for immediate execution
-
-## Position Sizing
-
-- **5%** at price 0 (long shot)
-- **10%** at price 1 (favorite)
-- Linear interpolation in between
-
-Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
-
-## Limitations
-
-- **Latency**: Data API is on-chain. There is a delay (typically ~30–60 seconds) before trades appear.
-- **Geographic restrictions**: Polymarket enforces geo-blocking; check [geoblocking docs](https://docs.polymarket.com/developers/CLOB/geoblock).
-- **Token allowances**: EOA/MetaMask users must set allowances before trading. See the [py-clob-client README](https://github.com/Polymarket/py-clob-client#important-token-allowances-for-metamaskeoa-users).
-
 ## Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MY_ADDRESS` | `0x370e...` | Your Polymarket wallet |
-| `TARGET_ADDRESS` | `0x6031...` | gabagool22’s wallet |
-| `MIN_PERCENT` | `0.05` | Min % of balance per bet |
-| `MAX_PERCENT` | `0.10` | Max % of balance per bet |
-| `POLL_INTERVAL` | `15` | Seconds between checks |
-| `MIN_BET_USD` | `1.0` | Minimum bet size (USDC) |
-| `CRON_SECRET` | — | Required for worker-to-web auth (random string) |
+| Variable | Description |
+|----------|-------------|
+| `MY_ADDRESS` | Your Polymarket proxy/funder address |
+| `CRON_SECRET` | Required for worker-to-web auth (random string) |
 
 ### UI Controls (Web App)
 

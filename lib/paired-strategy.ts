@@ -286,8 +286,9 @@ async function getRecentPairSignals(params: {
   for (const conditionId of conditionIds) {
     const groupedSnapshot = grouped.get(conditionId);
     if (!groupedSnapshot) continue;
-    if (groupedSnapshot.byOutcome.size < 2) {
-      bumpReason(diagnostics, "missing_two_outcomes");
+    // Require at least 1 outcome from trades (we can use market token prices for the other)
+    if (groupedSnapshot.byOutcome.size < 1) {
+      bumpReason(diagnostics, "missing_any_outcome");
       continue;
     }
 

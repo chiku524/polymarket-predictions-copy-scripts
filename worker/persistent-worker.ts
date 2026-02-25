@@ -37,7 +37,7 @@ function resolveTargetUrl(): string {
 
   if (!appBase) {
     throw new Error(
-      "Set APP_BASE_URL (or WORKER_TARGET_URL) so the worker knows where to call /api/copy-trade."
+      "Set APP_BASE_URL (or WORKER_TARGET_URL) so the worker knows where to call the strategy endpoint."
     );
   }
   return `${normalizeBaseUrl(appBase)}/api/copy-trade`;

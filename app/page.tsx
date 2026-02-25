@@ -79,7 +79,6 @@ interface Config {
   enableCadence5m: boolean;
   enableCadence15m: boolean;
   enableCadenceHourly: boolean;
-  copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
   stopLossBalance: number;
@@ -482,7 +481,6 @@ export default function Home() {
           enableCadence5m: true,
           enableCadence15m: true,
           enableCadenceHourly: true,
-          copyPercent: 5,
           maxBetUsd: 3,
           minBetUsd: 0.1,
           stopLossBalance: 0,
@@ -539,7 +537,6 @@ export default function Home() {
     enableCadence5m: true,
     enableCadence15m: true,
     enableCadenceHourly: true,
-    copyPercent: 5,
     maxBetUsd: 3,
     minBetUsd: 0.1,
     stopLossBalance: 0,
@@ -818,7 +815,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker or cron can call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> to run each cycle.
+          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker calls the strategy endpoint to run each cycle.
         </p>
 
         {/* Balance + Control bar */}

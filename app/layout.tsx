@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Polymarket Copy Trader",
-  description: "Copy trades from gabagool22 to your account",
+  title: "Polymarket Paired Strategy",
+  description: "Bet both sides on BTC/ETH Up-Down predictions with Off / Paper / Live modes",
 };
 
 export default function RootLayout({
