@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
-import { getConfig, getState, getRecentActivity } from "@/lib/kv";
+import {
+  getConfig,
+  getState,
+  getRecentActivity,
+  getPaperStats,
+  getStrategyDiagnosticsHistory,
+} from "@/lib/kv";
 import { getCashBalance } from "@/lib/copy-trade";
 
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 
 export async function GET() {
   try {
-    const [config, state, cashBalance, recentActivity] = await Promise.all([
+    const [config, state, cashBalance, recentActivity, paperStats, strategyDiagnosticsHistory] =
+      await Promise.all([
       getConfig(),
       getState(),
       getCashBalance(MY_ADDRESS).catch(() => 0),
       getRecentActivity(),
+      getPaperStats(),
+      getStrategyDiagnosticsHistory(),
     ]);
     return NextResponse.json({
       config,
@@ -19,12 +28,17 @@ export async function GET() {
         lastRunAt: state.lastRunAt,
         lastCopiedAt: state.lastCopiedAt,
         lastError: state.lastError,
+        lastStrategyDiagnostics: state.lastStrategyDiagnostics,
         runsSinceLastClaim: state.runsSinceLastClaim,
         lastClaimAt: state.lastClaimAt,
         lastClaimResult: state.lastClaimResult,
+        safetyLatch: state.safetyLatch,
+        dailyRisk: state.dailyRisk,
       },
       cashBalance,
       recentActivity,
+      paperStats,
+      strategyDiagnosticsHistory,
     });
   } catch (e) {
     console.error("Status error:", e);

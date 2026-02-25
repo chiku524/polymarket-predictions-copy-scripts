@@ -1,0 +1,12 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY worker ./worker
+
+ENV NODE_ENV=production
+
+CMD ["npm", "run", "worker"]

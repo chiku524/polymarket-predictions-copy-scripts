@@ -1,11 +1,29 @@
 import { NextResponse } from "next/server";
-import { getConfig, getState, setState, appendActivity } from "@/lib/kv";
-import { runCopyTrade } from "@/lib/copy-trade";
+import {
+  getConfig,
+  getState,
+  setState,
+  appendActivity,
+  acquireRunLock,
+  releaseRunLock,
+  recordPaperRun,
+  recordStrategyDiagnostics,
+} from "@/lib/kv";
+import { runPairedStrategy } from "@/lib/paired-strategy";
+import { getCashBalance } from "@/lib/copy-trade";
+import { sendAlert } from "@/lib/alerts";
+import {
+  applyDailyLiveRun,
+  attemptResolveSafetyLatch,
+  evaluateDailyRiskCaps,
+  initDailyRiskState,
+  shouldSendLatchAlert,
+} from "@/lib/live-safety";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
-const TARGET_ADDRESS = process.env.TARGET_ADDRESS ?? "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
+const LATCH_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
 export const maxDuration = 60;
 
@@ -22,51 +40,251 @@ export async function GET() {
  * Use for "Run now" button in the UI.
  */
 export async function POST() {
-  if (!PRIVATE_KEY) {
-    return NextResponse.json({ error: "PRIVATE_KEY not configured" }, { status: 500 });
+  const lockToken = await acquireRunLock(120);
+  if (!lockToken) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "busy" });
   }
 
   try {
     const config = await getConfig();
-    if (!config.enabled) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "disabled" });
+    if (config.mode === "off" || !config.enabled) {
+      await setState({ lastRunAt: Date.now(), lastError: undefined });
+      return NextResponse.json({ ok: true, skipped: true, reason: "mode_off" });
     }
-    const state = await getState();
-    const result = await runCopyTrade(
-      PRIVATE_KEY,
+    if (config.mode === "live" && !PRIVATE_KEY) {
+      return NextResponse.json({ error: "PRIVATE_KEY not configured for Live mode" }, { status: 500 });
+    }
+    let state = await getState();
+    let dailyRisk = state.dailyRisk;
+
+    if (config.mode === "live") {
+      const liveCashBalance = await getCashBalance(MY_ADDRESS).catch(() => 0);
+      dailyRisk = initDailyRiskState(state.dailyRisk, liveCashBalance);
+      const dailyCheck = evaluateDailyRiskCaps({
+        dailyRisk,
+        cashBalance: liveCashBalance,
+        maxDailyLiveNotionalUsd: config.maxDailyLiveNotionalUsd,
+        maxDailyDrawdownUsd: config.maxDailyDrawdownUsd,
+      });
+      dailyRisk = dailyCheck.dailyRisk;
+      if (dailyCheck.blocked) {
+        const now = Date.now();
+        await setState({
+          lastRunAt: now,
+          lastError: dailyCheck.message,
+          dailyRisk,
+        });
+        if (dailyCheck.shouldAlert) {
+          await sendAlert({
+            title: `Live run blocked: ${dailyCheck.reason}`,
+            severity: "critical",
+            details: {
+              drawdownUsd: dailyCheck.drawdownUsd,
+              maxDailyLiveNotionalUsd: config.maxDailyLiveNotionalUsd,
+              maxDailyDrawdownUsd: config.maxDailyDrawdownUsd,
+              dailyRisk,
+            },
+          });
+        }
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          reason: dailyCheck.reason,
+          error: dailyCheck.message,
+        });
+      }
+
+      if (state.safetyLatch?.active) {
+        const latchAttempt = await attemptResolveSafetyLatch({
+          latch: state.safetyLatch,
+          privateKey: PRIVATE_KEY ?? "",
+          myAddress: MY_ADDRESS,
+          signatureType: SIGNATURE_TYPE,
+          unwindSellSlippageCents: config.unwindSellSlippageCents,
+          unwindShareBufferPct: config.unwindShareBufferPct,
+        });
+        const now = Date.now();
+        const shouldAlert = shouldSendLatchAlert(state.safetyLatch, now, LATCH_ALERT_COOLDOWN_MS);
+        const latchReason = latchAttempt.resolved
+          ? `${latchAttempt.message}. Manual reset required to resume live runs.`
+          : latchAttempt.message;
+        const updatedLatch = {
+          ...state.safetyLatch,
+          active: true,
+          reason: latchReason,
+          unresolvedAssets: latchAttempt.remainingAssets,
+          attempts: (state.safetyLatch.attempts ?? 0) + 1,
+          lastAttemptAt: now,
+          lastAlertAt: shouldAlert ? now : state.safetyLatch.lastAlertAt,
+        };
+        await setState({
+          lastRunAt: now,
+          lastError: latchReason,
+          safetyLatch: updatedLatch,
+          dailyRisk,
+        });
+        if (shouldAlert) {
+          await sendAlert({
+            title: "Safety latch active before live run",
+            severity: latchAttempt.resolved ? "warning" : "critical",
+            details: {
+              attemptedAssets: latchAttempt.attemptedAssets,
+              resolvedAssets: latchAttempt.resolvedAssets,
+              failedAssets: latchAttempt.failedAssets,
+              remainingAssets: latchAttempt.remainingAssets,
+              attempts: updatedLatch.attempts,
+              latchReason,
+            },
+          });
+        }
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          reason: "safety_latch_active",
+          error: latchReason,
+        });
+      }
+    }
+
+    const result = await runPairedStrategy(
+      PRIVATE_KEY ?? "",
       MY_ADDRESS,
-      TARGET_ADDRESS,
       SIGNATURE_TYPE,
       {
-        copyPercent: config.copyPercent,
-        maxBetUsd: config.maxBetUsd,
+        mode: config.mode,
+        walletUsagePercent: config.walletUsagePercent,
+        pairChunkUsd: config.pairChunkUsd,
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
+        pairMinEdgeCents: config.pairMinEdgeCents,
+        pairMinEdgeCents5m: config.pairMinEdgeCents5m,
+        pairMinEdgeCents15m: config.pairMinEdgeCents15m,
+        pairMinEdgeCentsHourly: config.pairMinEdgeCentsHourly,
+        pairLookbackSeconds: config.pairLookbackSeconds,
+        pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
+        enableBtc: config.enableBtc,
+        enableEth: config.enableEth,
+        enableCadence5m: config.enableCadence5m,
+        enableCadence15m: config.enableCadence15m,
+        enableCadenceHourly: config.enableCadenceHourly,
+        maxUnresolvedImbalancesPerRun: config.maxUnresolvedImbalancesPerRun,
+        unwindSellSlippageCents: config.unwindSellSlippageCents,
+        unwindShareBufferPct: config.unwindShareBufferPct,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
 
+    const diagnostics = {
+      mode: result.mode,
+      evaluatedSignals: result.evaluatedSignals,
+      eligibleSignals: result.eligibleSignals,
+      rejectedReasons: result.rejectedReasons,
+      evaluatedBreakdown: result.evaluatedBreakdown,
+      eligibleBreakdown: result.eligibleBreakdown,
+      executedBreakdown: result.executedBreakdown,
+      copied: result.copied,
+      paper: result.paper,
+      failed: result.failed,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
+      error: result.error,
+      timestamp: Date.now(),
+    };
+
+    const now = Date.now();
+    let safetyLatch = state.safetyLatch;
+    if (
+      config.mode === "live" &&
+      (result.rejectedReasons["circuit_breaker_unresolved_imbalance"] ?? 0) > 0
+    ) {
+      safetyLatch = {
+        active: true,
+        reason: result.error ?? "Circuit breaker tripped due to unresolved imbalance",
+        triggeredAt: now,
+        unresolvedAssets: result.unresolvedExposureAssets,
+        attempts: 0,
+      };
+      await sendAlert({
+        title: "Live circuit breaker tripped",
+        severity: "critical",
+        details: {
+          unresolvedAssets: result.unresolvedExposureAssets,
+          rejectedReasons: result.rejectedReasons,
+          error: result.error,
+        },
+      });
+    }
+
+    if (config.mode === "live" && result.failed >= 3) {
+      await sendAlert({
+        title: "Live run had repeated failed orders",
+        severity: "warning",
+        details: {
+          failed: result.failed,
+          copied: result.copied,
+          error: result.error,
+          rejectedReasons: result.rejectedReasons,
+        },
+      });
+    }
+
+    const nextDailyRisk =
+      config.mode === "live"
+        ? applyDailyLiveRun(
+            dailyRisk ?? initDailyRiskState(state.dailyRisk, await getCashBalance(MY_ADDRESS).catch(() => 0), now),
+            result.budgetUsedUsd,
+            now
+          )
+        : state.dailyRisk;
+
     await setState({
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
       copiedKeys: result.copiedKeys.length > 0 ? result.copiedKeys : state.copiedKeys,
-      lastRunAt: Date.now(),
-      lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
+      lastRunAt: now,
+      lastCopiedAt: result.copied > 0 ? now : state.lastCopiedAt,
       lastError: result.error,
+      lastStrategyDiagnostics: diagnostics,
+      dailyRisk: nextDailyRisk,
+      safetyLatch,
     });
+    await recordStrategyDiagnostics(diagnostics);
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
+    }
+    if (result.mode === "paper") {
+      await recordPaperRun({
+        timestamp: Date.now(),
+        simulatedTrades: result.paper,
+        simulatedVolumeUsd: result.simulatedVolumeUsd,
+        failed: result.failed,
+        budgetCapUsd: result.budgetCapUsd,
+        budgetUsedUsd: result.budgetUsedUsd,
+        error: result.error,
+      });
     }
 
     return NextResponse.json({
       ok: true,
+      mode: result.mode,
       copied: result.copied,
+      paper: result.paper,
+      simulatedVolumeUsd: result.simulatedVolumeUsd,
       failed: result.failed,
+      evaluatedSignals: result.evaluatedSignals,
+      eligibleSignals: result.eligibleSignals,
+      rejectedReasons: result.rejectedReasons,
+      budgetCapUsd: result.budgetCapUsd,
+      budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
     });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     console.error("Copy trade error:", e);
     return NextResponse.json({ ok: false, error: err }, { status: 500 });
+  } finally {
+    await releaseRunLock(lockToken).catch((e) => {
+      console.error("Failed releasing run lock:", e);
+    });
   }
 }
