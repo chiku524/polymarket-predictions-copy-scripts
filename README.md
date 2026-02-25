@@ -2,33 +2,58 @@
 
 Run your own BTC/ETH Up-Down paired strategy on Polymarket with **Off / Paper / Live** modes, wallet budget caps, and paper analytics before going live.
 
-## Web UI (Vercel)
+## Web UI (Railway)
 
 A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**), adjust sizing, cap wallet usage per run, and run manually.
 
-### Deploy to Vercel
+### Deploy to Railway (single platform, two services)
 
-1. **Connect repo** on [vercel.com](https://vercel.com) and deploy.
+Use one Railway project with:
+- **Service A (web)**: Next.js UI + API routes
+- **Service B (worker)**: persistent strategy worker loop
 
-2. **Add Redis** (Storage → Redis, or Marketplace → Upstash Redis):
-   - Create a Redis database and link it to your project
-   - Env vars `KV_REST_API_URL` and `KV_REST_API_TOKEN` auto-populate (required for build)
+Both services can point to this same repo.
 
-3. **Environment variables** (Settings → Environment Variables):
-   - `PRIVATE_KEY` – Your wallet private key
-   - `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
-   - `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
-   - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
-   - `CRON_SECRET` – Any random string (e.g. `openssl rand -hex 32`) to secure the cron job
+#### 1) Create services from this repo
 
-4. **Cron** runs every minute when scheduled. Set mode to **Live** in the UI to place real orders, or **Paper** to simulate.
+- **web service**
+  - Dockerfile path: `Dockerfile`
+  - Exposes port `3000`
+- **worker service**
+  - Dockerfile path: `Dockerfile.worker`
+  - Runs `npm run worker`
 
-5. **Claiming winnings** – Resolved positions must be “claimed” to move winnings to your cash balance. The app:
-   - Runs **claim automatically every 10 strategy runs** (configurable via `CLAIM_EVERY_N_RUNS`).
-   - Or use the **Claim now** button in the UI (or `POST /api/claim-now`).
-   - For **Polymarket proxy wallets** (default), set Builder API keys so the relayer can execute the claim from your proxy:
-     - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE` (or `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`).
-   - Optional: `POLYGON_RPC_URL` (default: public Polygon RPC), `CLAIM_EVERY_N_RUNS` (default: 10).
+#### 2) Add Redis in Railway
+
+- Add a Railway Redis service in the same project.
+- Share Redis env vars with both services (`REDIS_URL` and/or `REDIS_PRIVATE_URL`).
+- This app now uses Redis directly (no Vercel KV dependency required).
+
+#### 3) Set environment variables
+
+For **web service**:
+- `PRIVATE_KEY` – Your wallet private key
+- `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
+- `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
+- `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
+- `CRON_SECRET` – shared secret used by worker when calling `/api/copy-trade`
+- optional claiming vars:
+  - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE`
+  - or aliases: `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`
+- optional: `POLYGON_RPC_URL`, `CLAIM_EVERY_N_RUNS`
+- optional alerts: `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TOKEN`
+
+For **worker service**:
+- `APP_BASE_URL` – public URL of your Railway web service
+- `CRON_SECRET` – must match web service
+- optional: `WORKER_INTERVAL_MS` (default `15000`)
+- optional: `WORKER_REQUEST_TIMEOUT_MS` (default `70000`)
+
+#### 4) Claiming winnings
+
+Resolved positions must be claimed to move winnings into available cash:
+- app auto-claims every `CLAIM_EVERY_N_RUNS` (default 10)
+- or use **Claim now** in UI / `POST /api/claim-now`
 
 ### Local dev
 
@@ -37,7 +62,7 @@ npm install
 npm run dev
 ```
 
-Requires Vercel KV. Use `vercel link` and `vercel env pull` to pull env vars locally.
+Requires Redis (set `REDIS_URL` locally).
 
 ### Persistent worker (recommended over cron)
 
@@ -142,7 +167,7 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 | `MAX_PERCENT` | `0.10` | Max % of balance per bet |
 | `POLL_INTERVAL` | `15` | Seconds between checks |
 | `MIN_BET_USD` | `1.0` | Minimum bet size (USDC) |
-| `CRON_SECRET` | — | Required for Vercel cron (random string) |
+| `CRON_SECRET` | — | Required for worker-to-web auth (random string) |
 
 ### UI Controls (Web App)
 

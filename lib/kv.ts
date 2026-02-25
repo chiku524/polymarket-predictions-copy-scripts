@@ -1,5 +1,110 @@
-import { kv } from "@vercel/kv";
+import Redis from "ioredis";
 import { randomUUID } from "crypto";
+
+interface KvSetOptions {
+  nx?: boolean;
+  ex?: number;
+}
+
+const REDIS_URL =
+  process.env.REDIS_URL?.trim() ||
+  process.env.REDIS_PRIVATE_URL?.trim() ||
+  process.env.REDIS_PUBLIC_URL?.trim();
+let redis: Redis | null = null;
+let warnedMemoryFallback = false;
+const memoryStore = new Map<string, { value: string; expiresAt?: number }>();
+
+function serializeValue(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseValue<T>(raw: string | null): T | null {
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return raw as T;
+  }
+}
+
+function ensureMemoryFresh(key: string): void {
+  const entry = memoryStore.get(key);
+  if (!entry) return;
+  if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+    memoryStore.delete(key);
+  }
+}
+
+function getRedis(): Redis | null {
+  if (!REDIS_URL) {
+    if (!warnedMemoryFallback) {
+      console.warn(
+        "REDIS_URL not configured; using in-memory KV fallback (non-persistent, single-instance only)."
+      );
+      warnedMemoryFallback = true;
+    }
+    return null;
+  }
+  if (!redis) {
+    redis = new Redis(REDIS_URL, {
+      maxRetriesPerRequest: 1,
+      enableAutoPipelining: true,
+      lazyConnect: false,
+    });
+  }
+  return redis;
+}
+
+const kv = {
+  async get<T>(key: string): Promise<T | null> {
+    const client = getRedis();
+    if (client) {
+      const raw = await client.get(key);
+      return parseValue<T>(raw);
+    }
+    ensureMemoryFresh(key);
+    return parseValue<T>(memoryStore.get(key)?.value ?? null);
+  },
+  async set(key: string, value: unknown, options?: KvSetOptions): Promise<"OK" | null> {
+    const payload = serializeValue(value);
+    const ttlSeconds =
+      options?.ex && Number.isFinite(options.ex) ? Math.max(1, Math.floor(options.ex)) : undefined;
+
+    const client = getRedis();
+    if (client) {
+      if (options?.nx && ttlSeconds) {
+        return client.set(key, payload, "EX", ttlSeconds, "NX");
+      }
+      if (options?.nx) {
+        return client.set(key, payload, "NX");
+      }
+      if (ttlSeconds) {
+        return client.set(key, payload, "EX", ttlSeconds);
+      }
+      return client.set(key, payload);
+    }
+
+    ensureMemoryFresh(key);
+    if (options?.nx && memoryStore.has(key)) return null;
+    memoryStore.set(key, {
+      value: payload,
+      expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined,
+    });
+    return "OK";
+  },
+  async del(key: string): Promise<number> {
+    const client = getRedis();
+    if (client) {
+      return client.del(key);
+    }
+    ensureMemoryFresh(key);
+    return memoryStore.delete(key) ? 1 : 0;
+  },
+};
 
 const CONFIG_KEY = "copy_trader_config";
 const STATE_KEY = "copy_trader_state";
