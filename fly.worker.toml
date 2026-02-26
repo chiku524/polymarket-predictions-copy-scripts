@@ -1,7 +1,7 @@
 # Worker process - polls /api/copy-trade on the web app
-# Polymarket blocks US IPs – use EU region
+# Polymarket blocks US/EU – use Tokyo (nrt); Japan is permitted
 app = 'polymarket-trader-worker'
-primary_region = 'ams'
+primary_region = 'nrt'
 
 [build]
   dockerfile = "Dockerfile.worker"

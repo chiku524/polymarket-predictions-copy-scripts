@@ -28,25 +28,25 @@ fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
 
 Polymarket blocks US-based IPs. You need both:
 
-**A) Machines in Amsterdam** – run the migration script if you see US regions:
+**A) Machines in Stockholm** – run the migration script if you see US regions:
 
 ```bash
 bash scripts/fly-migrate-to-eu.sh
 ```
 
-**B) Static egress IP in Amsterdam** – Fly’s default IPv4 egress uses shared NAT and can use US IPs even when machines are in AMS. Allocate an Amsterdam egress IP so outbound requests (e.g. to Polymarket) use an EU IP:
+**B) Static egress IP in Stockholm** – Fly’s default IPv4 egress uses shared NAT and can use US IPs even when machines are in AMS. Allocate an Amsterdam egress IP so outbound requests (e.g. to Polymarket) use an EU IP. Use Stockholm (arn) - Amsterdam (ams) may be restricted:
 
 ```bash
-fly ips allocate-egress -a polymarket-trader -r ams
+fly ips allocate-egress -a polymarket-trader -r arn
 ```
 
 This costs about $3.60/mo for IPv4. After allocation, existing machines may take a short time to use the new IP; redeploy if needed:
 
 ```bash
-fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region ams -y
+fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region arn -y
 ```
 
-Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = NL. Redis and the worker do not affect geoblock; only the web app’s outbound IP matters.
+Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = SE. Use the Fly URL, not localhost. Redis and the worker do not affect geoblock; only the web app’s outbound IP matters.
 
 #### 3) Add Redis
 

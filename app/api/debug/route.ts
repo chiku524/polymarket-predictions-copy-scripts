@@ -5,7 +5,7 @@ import { getCashBalance } from "@/lib/copy-trade";
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 const CRON_SECRET = process.env.CRON_SECRET;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const [config, state, cashBalance, geoblock] = await Promise.all([
       getConfig(),
@@ -65,6 +65,11 @@ export async function GET() {
           ? `Server IP is in restricted region (${geoblock.country}). Use a server in an allowed region (e.g. Fly.io EU).`
           : null,
       },
+      _requestHost: new URL(request.url).host,
+      _debugHint:
+        geoblock.blocked && geoblock.country === "US"
+          ? "If _requestHost is localhost, Polymarket sees YOUR IP. Open https://polymarket-trader.fly.dev (Fly URL) and use Diagnostics there instead."
+          : undefined,
     });
   } catch (e) {
     console.error("Debug error:", e);

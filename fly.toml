@@ -4,8 +4,8 @@
 #
 
 app = 'polymarket-trader'
-# Polymarket blocks US IPs – use EU region (ams=Amsterdam, arn=Stockholm, fra=Frankfurt, lhr=London, cdg=Paris)
-primary_region = 'ams'
+# Polymarket blocks US/EU regions – use Tokyo (nrt); Japan is permitted
+primary_region = 'nrt'
 
 [build]
 
