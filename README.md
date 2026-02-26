@@ -26,21 +26,27 @@ fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
 
 #### 2) Ensure EU region (required for Polymarket)
 
-Polymarket blocks US-based IPs. Both apps use `primary_region = 'ams'` (Amsterdam) in fly.toml.
+Polymarket blocks US-based IPs. Both apps must run in Amsterdam (`ams`).
 
-**If you see US/TX in Diagnostics** (machines were created in a US region), migrate to Amsterdam:
+**If you see US/TX in Diagnostics**, run the migration script:
 
 ```bash
-# Web app: scale to zero, redeploy (creates machines in primary_region=ams)
+bash scripts/fly-migrate-to-eu.sh
+```
+
+Or manually:
+
+```bash
+# Web app: destroy US machines, deploy to Amsterdam
 fly scale count app=0 -a polymarket-trader -y
-fly deploy -a polymarket-trader --config fly.toml --remote-only --depot=false
+fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region ams -y
 
 # Worker app
 fly scale count app=0 -a polymarket-trader-worker -y
-fly deploy -a polymarket-trader-worker --config fly.worker.toml --remote-only --depot=false
+fly deploy -a polymarket-trader-worker -c fly.worker.toml --remote-only --depot=false --primary-region ams -y
 ```
 
-This removes US-region machines; deploy recreates them in Amsterdam. Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = NL.
+**Important:** Use `--primary-region ams` so deploy creates machines in Amsterdam. Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = NL.
 
 #### 3) Add Redis
 
