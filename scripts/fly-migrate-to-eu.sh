@@ -8,7 +8,7 @@ for app in polymarket-trader polymarket-trader-worker; do
   echo "=== Migrating $app to Amsterdam ==="
   # Destroy all machines - deploy will create fresh in ams
   for id in $(fly machine list -a "$app" -q 2>/dev/null || true); do
-    [ -n "$id" ] && fly machine destroy "$id" -a "$app" --force -y
+    [ -n "$id" ] && fly machine destroy "$id" -a "$app" --force
   done
   fly scale count app=0 -a "$app" -y 2>/dev/null || true
   config="fly.toml"
