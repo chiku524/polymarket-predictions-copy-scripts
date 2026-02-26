@@ -96,10 +96,10 @@ const PAPER_BASELINE_PRESET: Partial<Config> = {
   pairChunkUsd: 1,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 3,
-  pairMinEdgeCents: 0.6,
-  pairMinEdgeCents5m: 0.6,
-  pairMinEdgeCents15m: 0.6,
-  pairMinEdgeCentsHourly: 0.6,
+  pairMinEdgeCents: 0.3,
+  pairMinEdgeCents5m: 0.3,
+  pairMinEdgeCents15m: 0.3,
+  pairMinEdgeCentsHourly: 0.3,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -1454,6 +1454,11 @@ export default function Home() {
                   {rejectedEntries.some(([r]) => r === "no_recent_signals") && (
                     <p className="text-xs text-amber-400/90 mt-2 px-2">
                       Tip: No BTC/ETH Up-Down trades in the lookback window. Increase &quot;Lookback (s)&quot; to 600 in settings.
+                    </p>
+                  )}
+                  {rejectedEntries.some(([r]) => r.startsWith("edge_below_threshold")) && (
+                    <p className="text-xs text-amber-400/90 mt-2 px-2">
+                      Tip: Lower &quot;Min edge (¢)&quot; for 5m, 15m, and Hourly to match the base (e.g. 0.3) so more signals qualify.
                     </p>
                   )}
                 </div>
