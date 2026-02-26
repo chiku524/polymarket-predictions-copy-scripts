@@ -4,8 +4,8 @@
 #
 
 app = 'polymarket-trader'
-# Polymarket blocks US/EU regions – use Tokyo (nrt); Japan is permitted
-primary_region = 'nrt'
+# Polymarket blocks US/EU – use Mumbai (bom); India is permitted
+primary_region = 'bom'
 
 [build]
 
