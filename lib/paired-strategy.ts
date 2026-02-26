@@ -232,7 +232,7 @@ async function getRecentPairSignals(params: {
     cadence5m,
     cadence15m,
     cadenceHourly,
-    tradeLimit = 1000,
+    tradeLimit = 5000,
     maxConditionsToInspect = 120,
   } = params;
   const nowSec = Math.floor(Date.now() / 1000);

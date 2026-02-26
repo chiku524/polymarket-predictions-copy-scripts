@@ -1045,7 +1045,7 @@ export default function Home() {
               <input
                 type="number"
                 min={20}
-                max={900}
+                max={1800}
                 step={5}
                 value={cfg.pairLookbackSeconds}
                 onChange={(e) =>
@@ -1053,7 +1053,7 @@ export default function Home() {
                     "pairLookbackSeconds",
                     parseInt(e.target.value, 10) || 600,
                     20,
-                    900
+                    1800
                   )
                 }
                 disabled={saving}
