@@ -26,19 +26,16 @@ fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
 
 #### 2) Ensure EU region (required for Polymarket)
 
-Polymarket blocks US-based IPs. Both apps use `primary_region = 'ams'` (Amsterdam). If your app was created in a US region, restrict it and redeploy:
+Polymarket blocks US-based IPs. **Run this before or after deploy** to restrict both apps to Amsterdam:
 
 ```bash
-# Web app
 fly regions set ams -a polymarket-trader
-fly deploy -a polymarket-trader --config fly.toml
-
-# Worker app
 fly regions set ams -a polymarket-trader-worker
-fly deploy -a polymarket-trader-worker --config fly.worker.toml
 ```
 
-This removes US regions and forces machines to run in Amsterdam. Verify with **Diagnostics** in the UI (geoblock should show `blocked: false`, `country` ≠ US).
+Then deploy (or redeploy) both apps. This removes US regions (TX, etc.) and forces machines to Amsterdam. The GitHub Actions workflow also runs `fly regions set ams` before each deploy.
+
+Verify with **Diagnostics & debug** in the UI: geoblock should show `blocked: false`, `country` = NL or other EU.
 
 #### 3) Add Redis
 
