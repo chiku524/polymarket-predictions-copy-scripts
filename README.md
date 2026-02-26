@@ -2,53 +2,48 @@
 
 Run your own BTC/ETH Up-Down paired strategy on Polymarket with **Off / Paper / Live** modes, wallet budget caps, and paper analytics before going live.
 
-## Web UI (Railway)
+## Web UI (Fly.io)
 
 A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**), adjust sizing, cap wallet usage per run, and run manually.
 
-### Deploy to Railway (single platform, two services)
+### Deploy to Fly.io (two apps: web + worker)
 
-Use one Railway project with:
-- **Service A (web)**: Next.js UI + API routes
-- **Service B (worker)**: persistent strategy worker loop
+Use two Fly.io apps from this repo:
+- **polymarket-trader** (web): Next.js UI + API routes
+- **polymarket-trader-worker**: persistent strategy worker loop
 
-Both services can point to this same repo.
+#### 1) Create apps and deploy
 
-#### 1) Create services from this repo
+**Web app:**
+```bash
+fly launch --config fly.toml  # or fly deploy --config fly.toml
+```
 
-- **web service**
-  - Dockerfile path: `Dockerfile`
-  - Exposes port `3000`
-- **worker service**
-  - Dockerfile path: `Dockerfile.worker`
-  - Runs `npm run worker`
+**Worker app (after web is live):**
+```bash
+fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
+```
 
-#### 2) Add Redis in Railway
+#### 2) Add Redis
 
-- Add a Railway Redis service in the same project.
-- Share Redis env vars with both services (`REDIS_URL` and/or `REDIS_PRIVATE_URL`).
-- This app now uses Redis directly (no Vercel KV dependency required).
+- Use [Fly.io Redis](https://fly.io/docs/reference/redis/) or an external Redis (Upstash, etc.).
+- Set `REDIS_URL` on both the web and worker apps.
 
-#### 3) Set environment variables
+#### 3) Set secrets (both apps)
 
-For **web service**:
-- `PRIVATE_KEY` – Your wallet private key
-- `MY_ADDRESS` – Your Polymarket proxy/funder address
-- `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
-- `CRON_SECRET` – shared secret used by worker when calling `/api/copy-trade`
-- optional claiming vars:
-  - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE`
-  - or aliases: `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`
-- optional: `POLYGON_RPC_URL`, `CLAIM_EVERY_N_RUNS`
-- optional alerts: `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TOKEN`
+```bash
+fly secrets set PRIVATE_KEY=... MY_ADDRESS=... SIGNATURE_TYPE=1 CRON_SECRET=... REDIS_URL=...
+```
 
-For **worker service**:
-- `APP_BASE_URL` – public URL of your Railway web service
-- `CRON_SECRET` – must match web service
-- optional: `WORKER_INTERVAL_MS` (default `15000`)
-- optional: `WORKER_REQUEST_TIMEOUT_MS` (default `70000`)
+Optional: `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE`, `POLYGON_RPC_URL`, `CLAIM_EVERY_N_RUNS`, `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TOKEN`.
 
-#### 4) Claiming winnings
+**Worker app only:** `APP_BASE_URL` (e.g. `https://polymarket-trader.fly.dev`). It’s pre-set in `fly.worker.toml` for the default app name; adjust if your web app URL differs.
+
+#### 4) GitHub Actions (optional)
+
+`.github/workflows/fly-deploy.yml` deploys the web app and worker on push to `main`. Add `FLY_API_TOKEN` to repo secrets. The workflow deploys both `fly.toml` and `fly.worker.toml` apps.
+
+#### 5) Claiming winnings
 
 Resolved positions must be claimed to move winnings into available cash:
 - app auto-claims every `CLAIM_EVERY_N_RUNS` (default 10)

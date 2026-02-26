@@ -28,12 +28,7 @@ function resolveTargetUrl(): string {
   const direct = process.env.WORKER_TARGET_URL?.trim();
   if (direct) return direct;
 
-  const appBase =
-    process.env.APP_BASE_URL?.trim() ||
-    (process.env.RAILWAY_PUBLIC_DOMAIN
-      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-      : undefined) ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+  const appBase = process.env.APP_BASE_URL?.trim();
 
   if (!appBase) {
     throw new Error(

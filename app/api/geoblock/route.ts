@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 /**
  * Proxies Polymarket's geoblock check so you can see what country/IP
  * Polymarket detects from THIS server's outbound requests.
- * Hit this from your Railway URL to verify the deployment region.
+ * Hit this from your app URL (e.g. Fly.io) to verify the deployment region.
  */
 export async function GET() {
   try {

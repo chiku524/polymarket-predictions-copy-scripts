@@ -267,7 +267,7 @@ export default function Home() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const isAbort = e instanceof Error && e.name === "AbortError";
-      setError(isAbort ? "Request timed out. Railway may be cold starting." : msg);
+      setError(isAbort ? "Request timed out. Your hosting provider may be cold starting." : msg);
     } finally {
       setLoading(false);
     }

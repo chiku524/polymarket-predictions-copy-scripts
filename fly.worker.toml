@@ -1,0 +1,14 @@
+# Worker process - polls /api/copy-trade on the web app
+app = 'polymarket-trader-worker'
+primary_region = 'arn'
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  APP_BASE_URL = "https://polymarket-trader.fly.dev"
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1

@@ -22,7 +22,7 @@ export async function GET() {
       : null;
     const cronHint =
       lastRunAgeSec != null && lastRunAgeSec > 120
-        ? `Worker/cron may not be hitting: last run ${lastRunAgeSec}s ago. Check worker APP_BASE_URL (must be Railway URL) and Authorization: Bearer CRON_SECRET.`
+        ? `Worker/cron may not be hitting: last run ${lastRunAgeSec}s ago. Check worker APP_BASE_URL (your web app URL, e.g. https://polymarket-trader.fly.dev) and Authorization: Bearer CRON_SECRET.`
         : null;
 
     const diag = state.lastStrategyDiagnostics;
@@ -62,7 +62,7 @@ export async function GET() {
         region: geoblock.region,
         ip: geoblock.ip,
         note: geoblock.blocked
-          ? `Server IP is in restricted region (${geoblock.country}). Use Railway EU West (Amsterdam).`
+          ? `Server IP is in restricted region (${geoblock.country}). Use a server in an allowed region (e.g. Fly.io EU).`
           : null,
       },
     });
