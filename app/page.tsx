@@ -94,7 +94,7 @@ const PAPER_BASELINE_PRESET: Partial<Config> = {
   mode: "paper",
   walletUsagePercent: 10,
   pairChunkUsd: 1,
-  pairLookbackSeconds: 180,
+  pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 3,
   pairMinEdgeCents: 0.6,
   pairMinEdgeCents5m: 0.6,
@@ -1051,7 +1051,7 @@ export default function Home() {
                 onChange={(e) =>
                   handleNumericConfigChange(
                     "pairLookbackSeconds",
-                    parseInt(e.target.value, 10) || 120,
+                    parseInt(e.target.value, 10) || 600,
                     20,
                     900
                   )
@@ -1451,6 +1451,11 @@ export default function Home() {
                       </span>
                     </div>
                   ))}
+                  {rejectedEntries.some(([r]) => r === "no_recent_signals") && (
+                    <p className="text-xs text-amber-400/90 mt-2 px-2">
+                      Tip: No BTC/ETH Up-Down trades in the lookback window. Increase &quot;Lookback (s)&quot; to 600 in settings.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-zinc-600">No rejections recorded in last run.</p>

@@ -279,7 +279,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
-  pairLookbackSeconds: 120,
+  pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   enableBtc: true,
   enableEth: true,
