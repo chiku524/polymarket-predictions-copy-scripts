@@ -234,6 +234,8 @@ export default function Home() {
   const [activePage, setActivePage] = useState(0);
   const [resolvedPage, setResolvedPage] = useState(0);
   const [trendRuns, setTrendRuns] = useState(20);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showDiagnosticsTrend, setShowDiagnosticsTrend] = useState(false);
   const configUpdatedAtRef = useRef<number>(0);
   const configRef = useRef<Config | null>(null);
 
@@ -772,20 +774,32 @@ export default function Home() {
     setTimeout(() => setRunResult(null), 4500);
   };
 
+  const lastRunAgo = status?.state.lastRunAt
+    ? Math.floor((Date.now() - status.state.lastRunAt) / 1000)
+    : null;
+  const workerStatusText =
+    lastRunAgo === null
+      ? "No runs yet"
+      : lastRunAgo < 60
+        ? `Last run ${lastRunAgo}s ago`
+        : lastRunAgo < 3600
+          ? `Last run ${Math.floor(lastRunAgo / 60)}m ago`
+          : `Last run ${Math.floor(lastRunAgo / 3600)}h ago`;
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-2xl mx-auto p-6 md:p-8">
+      <div className="max-w-2xl mx-auto p-4 sm:p-6 md:p-8">
         {/* Header */}
-        <header className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">Polymarket Paired Trader</h1>
-          <p className="mt-1 text-zinc-500">
-            Running <span className="text-emerald-400">paired BTC/ETH Up-Down strategy</span> on your account
+        <header className="mb-6">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Polymarket Paired Trader</h1>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            BTC/ETH Up–Down paired strategy · Off / Paper / Live
           </p>
         </header>
 
         {error && (
-          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-4">
-            <p className="text-sm text-red-400 flex-1">{error}</p>
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3">
+            <p className="text-sm text-red-400 flex-1 min-w-0">{error}</p>
             <button
               onClick={() => setError(null)}
               className="text-xs text-red-400 hover:text-red-300 shrink-0"
@@ -796,61 +810,46 @@ export default function Home() {
         )}
 
         {safetyLatch?.active && (
-          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30">
-            <p className="text-sm text-red-300 font-medium">
-              Safety latch is active (live trading blocked until resolved)
-            </p>
-            <p className="text-xs text-red-300/90 mt-1">{safetyLatch.reason}</p>
-            <p className="text-xs text-red-400/80 mt-1">
-              Triggered: {new Date(safetyLatch.triggeredAt).toLocaleString()} · Attempts: {safetyLatch.attempts}
-              {safetyLatch.unresolvedAssets?.length
-                ? ` · Assets: ${safetyLatch.unresolvedAssets.join(", ")}`
-                : ""}
-            </p>
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-300 font-medium">Safety latch active</p>
+            <p className="text-xs text-red-300/90 mt-0.5">{safetyLatch.reason}</p>
             <p className="text-xs text-zinc-500 mt-1">
-              Use <strong>Reset sync</strong> only after you confirm residual exposure is resolved.
+              Resolve exposure first, then use <strong>Reset sync</strong>.
             </p>
           </div>
         )}
 
-        {/* Note: no need to keep UI open */}
-        <p className="mb-4 text-xs text-zinc-500">
-          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker calls the strategy endpoint to run each cycle.
-        </p>
-
-        {/* Balance + Control bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-8 p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/60">
-          <div>
-            <p className="text-xs text-zinc-500 uppercase tracking-wider">Cash balance</p>
-            <p className="text-2xl font-semibold text-emerald-400">
-              ${(status?.cashBalance ?? 0).toFixed(2)}
-            </p>
-            <p className="text-xs text-zinc-500 mt-1">
-              Mode: <span className="uppercase text-zinc-300">{cfg.mode}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 rounded-lg bg-zinc-800/70 p-1">
-              {(["off", "paper", "live"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setMode(mode)}
-                  disabled={saving}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium uppercase tracking-wide transition-colors disabled:opacity-50 ${
-                    cfg.mode === mode
-                      ? mode === "live"
-                        ? "bg-emerald-500/30 text-emerald-300"
-                        : mode === "paper"
-                          ? "bg-sky-500/30 text-sky-300"
-                          : "bg-zinc-700 text-zinc-200"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
+        {/* Hero: Worker control + balance */}
+        <section className="mb-6 p-4 sm:p-5 rounded-xl bg-zinc-900/80 border border-zinc-800/60 shadow-lg">
+          <p className="text-[11px] text-zinc-500 uppercase tracking-wider mb-3">Worker control</p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-center gap-1.5 p-1 rounded-lg bg-zinc-800/80">
+                {(["off", "paper", "live"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setMode(mode)}
+                    disabled={saving}
+                    className={`px-4 py-2 rounded-md text-sm font-medium uppercase tracking-wide transition-all disabled:opacity-50 ${
+                      cfg.mode === mode
+                        ? mode === "live"
+                          ? "bg-emerald-500/40 text-emerald-200 shadow-sm"
+                          : mode === "paper"
+                            ? "bg-sky-500/40 text-sky-200 shadow-sm"
+                            : "bg-zinc-700 text-zinc-200"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-zinc-500">Balance</span>
+                <span className="font-semibold text-emerald-400">${(status?.cashBalance ?? 0).toFixed(2)}</span>
+              </div>
             </div>
-            <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-col sm:items-end gap-2">
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={runNow}
@@ -864,7 +863,7 @@ export default function Home() {
                   disabled={claiming}
                   className="px-3 py-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-400 text-sm disabled:opacity-50 transition-colors"
                 >
-                  {claiming ? "Claiming…" : "Claim now"}
+                  {claiming ? "Claiming…" : "Claim"}
                 </button>
                 <button
                   onClick={resetSync}
@@ -874,31 +873,41 @@ export default function Home() {
                   {resetting ? "Resetting…" : "Reset sync"}
                 </button>
               </div>
+              <p className="text-xs text-zinc-500">{workerStatusText}</p>
               {(runResult || claimResult) && (
                 <span className="text-xs text-emerald-400/90">{runResult || claimResult}</span>
               )}
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Settings */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+        {/* Trade controls */}
+        <section className="mb-6 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Trade controls</h2>
-            <button
-              onClick={applyPaperBaselinePreset}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
-            >
-              Apply paper baseline preset
-            </button>
+            <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Trade settings</h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                {showAdvanced ? "Hide" : "Show"} advanced
+              </button>
+              <button
+                onClick={applyPaperBaselinePreset}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
+              >
+                Paper preset
+              </button>
+            </div>
           </div>
           <p className="text-sm text-zinc-400 mb-4">
-            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>, daily caps <strong>{dailyCapSummary}</strong>.
+            <strong>{selectedCoins}</strong> · {selectedCadences} · $<strong>{cfg.pairChunkUsd}</strong>/pair · {cfg.walletUsagePercent}% wallet cap
           </p>
-          <div className="flex flex-wrap gap-6">
+          <div className="flex flex-wrap gap-4 sm:gap-6">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Default min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Min edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -916,10 +925,11 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Fallback when cadence-specific values are unavailable</p>
             </div>
+            {showAdvanced && (
+            <>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">5m min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">5m edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -939,7 +949,7 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">15m min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">15m edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -959,7 +969,7 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Hourly min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Hourly edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -978,8 +988,10 @@ export default function Home() {
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
+            </>
+            )}
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Pair chunk (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Pair chunk ($)</p>
               <input
                 type="number"
                 min={1}
@@ -1446,16 +1458,25 @@ export default function Home() {
         </section>
 
         {/* Strategy diagnostics trend */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <section className="mb-6 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <button
+            type="button"
+            onClick={() => setShowDiagnosticsTrend((v) => !v)}
+            className="w-full flex flex-wrap items-center justify-between gap-3 mb-3 text-left"
+          >
             <div>
               <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
                 Strategy diagnostics trend
               </h2>
-              <p className="text-xs text-zinc-600 mt-1">
-                Last-N run rollup for tuning and Phase 2 calibration.
+              <p className="text-xs text-zinc-600 mt-0.5">
+                {showDiagnosticsTrend ? "Last-N run rollup for tuning" : `Last ${trendRuns} runs · Click to expand`}
               </p>
             </div>
+            <span className="text-zinc-500 text-sm">{showDiagnosticsTrend ? "−" : "+"}</span>
+          </button>
+          {showDiagnosticsTrend && (
+          <>
+          <div className="flex flex-wrap items-center justify-end gap-3 mb-3">
             <label className="text-xs text-zinc-500 flex items-center gap-2">
               Last
               <select
@@ -1637,6 +1658,8 @@ export default function Home() {
               No diagnostics history yet. Run the strategy a few cycles to populate trends.
             </p>
           )}
+          </>
+          )}
         </section>
 
         {/* Recent activity */}
@@ -1809,14 +1832,16 @@ export default function Home() {
         </section>
 
         {/* Status footer */}
-        <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500">
-          Last run: {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
+        <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500 space-y-0.5">
+          <p>
+          Last run {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
           Last execution: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
           {" · "}
           Last claim: {status?.state.lastClaimAt ? new Date(status.state.lastClaimAt).toLocaleString() : "—"}
           {status?.state.lastClaimResult && (
             <span> ({status.state.lastClaimResult.claimed} claimed)</span>
           )}
+          </p>
           {status?.state.runsSinceLastClaim != null && (
             <span className="block mt-0.5 text-zinc-600">Claim runs every 10 strategy runs ({status.state.runsSinceLastClaim}/10)</span>
           )}
@@ -1827,9 +1852,9 @@ export default function Home() {
             href={typeof window !== "undefined" ? `${window.location.origin}/api/debug` : "/api/debug"}
             target="_blank"
             rel="noopener noreferrer"
-            className="block mt-2 text-zinc-500 hover:text-zinc-400"
+            className="inline-block mt-2 text-zinc-500 hover:text-zinc-300"
           >
-            Debug
+            Diagnostics & debug →
           </a>
         </footer>
 

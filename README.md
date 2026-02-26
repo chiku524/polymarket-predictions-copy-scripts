@@ -24,12 +24,28 @@ fly launch --config fly.toml  # or fly deploy --config fly.toml
 fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
 ```
 
-#### 2) Add Redis
+#### 2) Ensure EU region (required for Polymarket)
+
+Polymarket blocks US-based IPs. Both apps use `primary_region = 'ams'` (Amsterdam). If your app was created in a US region, restrict it and redeploy:
+
+```bash
+# Web app
+fly regions set ams -a polymarket-trader
+fly deploy -a polymarket-trader --config fly.toml
+
+# Worker app
+fly regions set ams -a polymarket-trader-worker
+fly deploy -a polymarket-trader-worker --config fly.worker.toml
+```
+
+This removes US regions and forces machines to run in Amsterdam. Verify with **Diagnostics** in the UI (geoblock should show `blocked: false`, `country` ≠ US).
+
+#### 3) Add Redis
 
 - Use [Fly.io Redis](https://fly.io/docs/reference/redis/) or an external Redis (Upstash, etc.).
 - Set `REDIS_URL` on both the web and worker apps.
 
-#### 3) Set secrets (both apps)
+#### 4) Set secrets (both apps)
 
 ```bash
 fly secrets set PRIVATE_KEY=... MY_ADDRESS=... SIGNATURE_TYPE=1 CRON_SECRET=... REDIS_URL=...
@@ -39,11 +55,23 @@ Optional: `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRAS
 
 **Worker app only:** `APP_BASE_URL` (e.g. `https://polymarket-trader.fly.dev`). It’s pre-set in `fly.worker.toml` for the default app name; adjust if your web app URL differs.
 
-#### 4) GitHub Actions (optional)
+#### 5) GitHub Actions (optional)
 
-`.github/workflows/fly-deploy.yml` deploys the web app and worker on push to `main`. Add `FLY_API_TOKEN` to repo secrets. The workflow deploys both `fly.toml` and `fly.worker.toml` apps.
+`.github/workflows/fly-deploy.yml` deploys the web app and worker on push to `main`.
 
-#### 5) Claiming winnings
+**Token setup (required for CI deploys):** You need an org-scoped token (or two app-scoped tokens) because the workflow deploys two apps.
+
+- **Option A – Org-scoped (recommended):** Deploy both apps with one token:
+  ```bash
+  fly tokens create org --name "github-actions" -x 999999h
+  ```
+  Copy the full output (including `FlyV1` and space). Add it as repo secret `FLY_API_TOKEN` in GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+
+- **Option B – App-scoped:** Create one token per app, then use two secrets (`FLY_API_TOKEN` for web, `FLY_API_TOKEN_WORKER` for worker) and update the workflow to use the appropriate token per job.
+
+If you get `Error: unauthorized`, verify: (1) the secret exists and is spelled `FLY_API_TOKEN`, (2) the token was copied in full, (3) you used an org-scoped token (or matching app-scoped tokens).
+
+#### 6) Claiming winnings
 
 Resolved positions must be claimed to move winnings into available cash:
 - app auto-claims every `CLAIM_EVERY_N_RUNS` (default 10)
