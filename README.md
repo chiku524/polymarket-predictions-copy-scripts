@@ -172,7 +172,7 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 ### UI Controls (Web App)
 
 - **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
-- **Paper baseline preset**: one-click starter profile for safe paper testing (`Paper` mode, conservative wallet cap/chunk, broad cadence coverage)
+- **Paper high-data preset**: one-click profile for dense paper sampling (`Paper` mode, 0.1c edge floor, max markets/run, focused on BTC/ETH 5m+15m)
 - **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
 - **Coins**: enable/disable `BTC` and `ETH` independently
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets

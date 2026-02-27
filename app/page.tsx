@@ -91,21 +91,21 @@ interface Config {
   maxDailyDrawdownUsd: number;
 }
 
-const PAPER_BASELINE_PRESET: Partial<Config> = {
+const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   mode: "paper",
-  walletUsagePercent: 10,
+  walletUsagePercent: 100,
   pairChunkUsd: 1,
-  pairLookbackSeconds: 180,
-  pairMaxMarketsPerRun: 3,
-  pairMinEdgeCents: 0.6,
-  pairMinEdgeCents5m: 0.6,
-  pairMinEdgeCents15m: 0.6,
-  pairMinEdgeCentsHourly: 0.6,
+  pairLookbackSeconds: 300,
+  pairMaxMarketsPerRun: 20,
+  pairMinEdgeCents: 0.1,
+  pairMinEdgeCents5m: 0.1,
+  pairMinEdgeCents15m: 0.1,
+  pairMinEdgeCentsHourly: 0.2,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
   enableCadence15m: true,
-  enableCadenceHourly: true,
+  enableCadenceHourly: false,
   minBetUsd: 0.1,
   floorToPolymarketMin: true,
 };
@@ -770,8 +770,10 @@ export default function Home() {
   };
 
   const applyPaperBaselinePreset = async () => {
-    await updateConfig(PAPER_BASELINE_PRESET, true);
-    setRunResult("Applied Paper baseline preset (mode Paper, 10% wallet cap, $1 pair chunk)");
+    await updateConfig(PAPER_HIGH_DATA_PRESET, true);
+    setRunResult(
+      "Applied Paper high-data preset (0.1c edge, max markets/run, 5m+15m focus)"
+    );
     setTimeout(() => setRunResult(null), 4500);
   };
 
@@ -893,7 +895,7 @@ export default function Home() {
               disabled={saving}
               className="px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
             >
-              Apply paper baseline preset
+              Apply paper high-data preset
             </button>
           </div>
           <p className="text-sm text-zinc-400 mb-4">
