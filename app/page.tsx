@@ -467,38 +467,42 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
-      const nextConfig = {
-        ...(status?.config ?? {
-          enabled: false,
-          mode: "off" as const,
-          walletUsagePercent: 25,
-          pairChunkUsd: 3,
-          pairMinEdgeCents: 0.5,
-          pairMinEdgeCents5m: 0.5,
-          pairMinEdgeCents15m: 0.5,
-          pairMinEdgeCentsHourly: 0.5,
-          pairLookbackSeconds: 120,
-          pairMaxMarketsPerRun: 4,
-          enableBtc: true,
-          enableEth: true,
-          enableCadence5m: true,
-          enableCadence15m: true,
-          enableCadenceHourly: true,
-          maxBetUsd: 3,
-          minBetUsd: 0.1,
-          stopLossBalance: 0,
-          maxUnresolvedImbalancesPerRun: 1,
-          unwindSellSlippageCents: 3,
-          unwindShareBufferPct: 99,
-          maxDailyLiveNotionalUsd: 0,
-          maxDailyDrawdownUsd: 0,
-        }),
-        [field]: clamped,
+      const base = status?.config ?? {
+        enabled: false,
+        mode: "off" as const,
+        walletUsagePercent: 25,
+        pairChunkUsd: 3,
+        pairMinEdgeCents: 0.5,
+        pairMinEdgeCents5m: 0.5,
+        pairMinEdgeCents15m: 0.5,
+        pairMinEdgeCentsHourly: 0.5,
+        pairLookbackSeconds: 120,
+        pairMaxMarketsPerRun: 4,
+        enableBtc: true,
+        enableEth: true,
+        enableCadence5m: true,
+        enableCadence15m: true,
+        enableCadenceHourly: true,
+        maxBetUsd: 3,
+        minBetUsd: 0.1,
+        stopLossBalance: 0,
+        maxUnresolvedImbalancesPerRun: 1,
+        unwindSellSlippageCents: 3,
+        unwindShareBufferPct: 99,
+        maxDailyLiveNotionalUsd: 0,
+        maxDailyDrawdownUsd: 0,
       };
+      const updates: Partial<Config> = { [field]: clamped };
+      if (field === "pairMinEdgeCents") {
+        updates.pairMinEdgeCents5m = clamped;
+        updates.pairMinEdgeCents15m = clamped;
+        updates.pairMinEdgeCentsHourly = clamped;
+      }
+      const nextConfig = { ...base, ...updates };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
-      debouncedUpdateConfig({ [field]: clamped });
+      debouncedUpdateConfig(updates);
     },
     [debouncedUpdateConfig, status?.config]
   );
