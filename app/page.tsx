@@ -263,8 +263,8 @@ export default function Home() {
       ]);
       if (!statusRes.ok) throw new Error("Failed to load status");
       if (!positionsRes.ok) throw new Error("Failed to load positions");
-      const statusData = await safeJson(statusRes);
-      const positionsData = await safeJson(positionsRes);
+      const statusData = (await safeJson(statusRes)) as Status;
+      const positionsData = (await safeJson(positionsRes)) as { active?: Position[]; resolved?: Position[] };
       setStatus((prev) => {
         if (!prev) {
           if (statusData.config) configRef.current = statusData.config;
@@ -318,8 +318,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      const data = (await safeJson(res)) as Config;
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Failed to save");
       configRef.current = data;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
@@ -341,7 +341,17 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/run-now`, { method: "POST" });
-      const data = await safeJson(res);
+      const data = (await safeJson(res)) as {
+        error?: string;
+        skipped?: boolean;
+        reason?: string;
+        mode?: string;
+        paper?: number;
+        copied?: number;
+        simulatedVolumeUsd?: number;
+        eligibleSignals?: number;
+        evaluatedSignals?: number;
+      };
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
@@ -360,9 +370,10 @@ export default function Home() {
         }
       } else if (data.mode === "paper") {
         const simVolume = Number(data.simulatedVolumeUsd ?? 0);
-        if (data.paper > 0) {
+        const paperCount = data.paper ?? 0;
+        if (paperCount > 0) {
           setRunResult(
-            `Paper simulated ${data.paper} pair${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
+            `Paper simulated ${paperCount} pair${paperCount === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
           );
         } else {
           const eligible = Number(data.eligibleSignals ?? 0);
@@ -371,7 +382,7 @@ export default function Home() {
         }
       } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
         setRunResult(data.error);
-      } else if (data.copied > 0) {
+      } else if ((data.copied ?? 0) > 0) {
         setRunResult(`Executed ${data.copied} paired signal${data.copied === 1 ? "" : "s"}`);
       } else {
         const eligible = Number(data.eligibleSignals ?? 0);
@@ -394,8 +405,8 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/reset-sync`, { method: "POST" });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.error ?? "Reset failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Reset failed");
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reset failed");
@@ -410,8 +421,8 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/paper-stats`, { method: "DELETE" });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.error ?? "Reset paper stats failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Reset paper stats failed");
       await fetchAll(true);
       setRunResult("Paper analytics reset");
       setTimeout(() => setRunResult(null), 4000);
@@ -429,16 +440,17 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/claim-now`, { method: "POST" });
-      const data = await safeJson(res);
+      const data = (await safeJson(res)) as { error?: string; claimed?: number; errors?: string[] };
       if (!res.ok) throw new Error(data.error ?? "Claim failed");
       await fetchAll(true);
-      if (data.claimed > 0) {
-        setClaimResult(`Claimed ${data.claimed} position${data.claimed === 1 ? "" : "s"}`);
-      } else if (data.claimed === 0 && !data.error) {
+      const claimed = data.claimed ?? 0;
+      if (claimed > 0) {
+        setClaimResult(`Claimed ${claimed} position${claimed === 1 ? "" : "s"}`);
+      } else if (claimed === 0 && !data.error) {
         setClaimResult("No redeemable positions to claim");
       }
       if (data.errors?.length) {
-        setClaimResult((prev) => (prev ? `${prev}. ${data.errors[0]}` : data.errors[0]));
+        setClaimResult((prev) => (prev ? `${prev}. ${data.errors![0]}` : data.errors![0]));
       }
       setTimeout(() => setClaimResult(null), 5000);
     } catch (e) {
@@ -461,8 +473,8 @@ export default function Home() {
           price: pos.curPrice > 0 ? pos.curPrice : 0.5,
         }),
       });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Cashout failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Cashout failed");
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cashout failed");
