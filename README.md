@@ -51,7 +51,7 @@ Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `cou
 #### 3) Add Redis
 
 - Use [Fly.io Redis](https://fly.io/docs/reference/redis/) or an external Redis (Upstash, etc.).
-- Set `REDIS_URL` on both the web and worker apps.
+- Set `REDIS_URL` on the **web app** (`polymarket-trader`). The worker does not use Redis.
 
 #### 4) Set secrets (both apps)
 

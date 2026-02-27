@@ -18,6 +18,18 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}): Promise<Re
   }
 }
 
+async function safeJson<T = unknown>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text || !text.trim()) {
+    throw new Error(res.ok ? "Empty response" : `Request failed (${res.status})`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(res.ok ? "Invalid response format" : `Request failed (${res.status}): ${text.slice(0, 80)}`);
+  }
+}
+
 function useDebouncedCallback<A extends unknown[]>(
   fn: (...args: A) => void,
   delay: number
@@ -251,8 +263,8 @@ export default function Home() {
       ]);
       if (!statusRes.ok) throw new Error("Failed to load status");
       if (!positionsRes.ok) throw new Error("Failed to load positions");
-      const statusData = await statusRes.json();
-      const positionsData = await positionsRes.json();
+      const statusData = await safeJson(statusRes);
+      const positionsData = await safeJson(positionsRes);
       setStatus((prev) => {
         if (!prev) {
           if (statusData.config) configRef.current = statusData.config;
@@ -306,7 +318,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error ?? "Failed to save");
       configRef.current = data;
       configUpdatedAtRef.current = Date.now();
@@ -329,7 +341,7 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/run-now`, { method: "POST" });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
@@ -382,7 +394,7 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/reset-sync`, { method: "POST" });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error ?? "Reset failed");
       await fetchAll(true);
     } catch (e) {
@@ -398,7 +410,7 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/paper-stats`, { method: "DELETE" });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error ?? "Reset paper stats failed");
       await fetchAll(true);
       setRunResult("Paper analytics reset");
@@ -417,7 +429,7 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/claim-now`, { method: "POST" });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error ?? "Claim failed");
       await fetchAll(true);
       if (data.claimed > 0) {
@@ -449,8 +461,8 @@ export default function Home() {
           price: pos.curPrice > 0 ? pos.curPrice : 0.5,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Cashout failed");
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Cashout failed");
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cashout failed");

@@ -1,5 +1,6 @@
 .env
 .env.local
+.env.secrets
 node_modules/
 .next/
 next-env.d.ts

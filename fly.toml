@@ -7,6 +7,9 @@ app = 'polymarket-trader'
 # Polymarket blocks US/EU – use Mumbai (bom); India is permitted
 primary_region = 'bom'
 
+[env]
+  SIGNATURE_TYPE = "1"
+
 [build]
 
 [http_service]

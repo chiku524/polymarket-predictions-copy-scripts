@@ -51,9 +51,14 @@ function getRedis(): Redis | null {
   }
   if (!redis) {
     redis = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 1,
+      maxRetriesPerRequest: 5,
       enableAutoPipelining: true,
       lazyConnect: false,
+      connectTimeout: 10000,
+      retryStrategy(times) {
+        if (times > 5) return null;
+        return Math.min(times * 200, 2000);
+      },
     });
   }
   return redis;
