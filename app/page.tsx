@@ -137,6 +137,8 @@ interface StrategyDiagnostics {
   budgetUsedUsd: number;
   error?: string;
   timestamp: number;
+  maxEdgeCentsSeen?: number;
+  minPairSumSeen?: number;
 }
 
 interface Status {
@@ -1408,7 +1410,10 @@ export default function Home() {
               </div>
               <p className="text-xs text-zinc-500 mb-3">
                 Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
-                Updated: {new Date(lastDiag.timestamp).toLocaleString()}
+                {lastDiag.maxEdgeCentsSeen != null && (
+                  <> Best edge seen: <span className={lastDiag.maxEdgeCentsSeen < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.maxEdgeCentsSeen.toFixed(2)}¢</span> ·</>
+                )}
+                {" "}Updated: {new Date(lastDiag.timestamp).toLocaleString()}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
                 <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
@@ -1462,7 +1467,9 @@ export default function Home() {
                   )}
                   {rejectedEntries.some(([r]) => r.startsWith("edge_below_threshold")) && (
                     <p className="text-xs text-amber-400/90 mt-2 px-2">
-                      Tip: Lower &quot;Min edge (¢)&quot; for 5m, 15m, and Hourly to match the base (e.g. 0.3) so more signals qualify.
+                      {lastDiag?.maxEdgeCentsSeen != null && lastDiag.maxEdgeCentsSeen < 0
+                        ? `All signals have negative edge (best: ${lastDiag.maxEdgeCentsSeen.toFixed(2)}¢, pairSum ${(lastDiag.minPairSumSeen ?? 0).toFixed(4)}). No profitable opportunities in current market—prices sum above $1.`
+                        : "Lower \"Min edge (¢)\" for 5m, 15m, and Hourly to match the base (e.g. 0.3) so more signals qualify."}
                     </p>
                   )}
                 </div>

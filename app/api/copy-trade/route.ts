@@ -187,6 +187,8 @@ async function runCopyTradeHandler() {
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
       timestamp: Date.now(),
+      maxEdgeCentsSeen: result._maxEdgeCents,
+      minPairSumSeen: result._minPairSum,
     };
     const now = Date.now();
     let safetyLatch = state.safetyLatch;

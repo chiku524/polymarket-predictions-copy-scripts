@@ -93,6 +93,10 @@ export interface PairedStrategyResult {
   unresolvedExposureAssets: string[];
   copiedKeys: string[];
   copiedTrades: CopiedTrade[];
+  /** Best edge among evaluated signals (cents), for diagnostics */
+  _maxEdgeCents?: number;
+  /** Lowest pairSum among evaluated signals, for diagnostics */
+  _minPairSum?: number;
 }
 
 function toNum(v: unknown): number {
@@ -528,11 +532,20 @@ export async function runPairedStrategy(
   }
   const signals = signalBuild.signals;
   result.evaluatedSignals = signals.length;
+  let maxEdgeCentsSeen = -Infinity;
+  let minPairSumSeen = Infinity;
   for (const signal of signals) {
     bumpBreakdown(result.evaluatedBreakdown, signal);
+    const edgeCents = signal.edge * 100;
+    if (edgeCents > maxEdgeCentsSeen) maxEdgeCentsSeen = edgeCents;
+    if (signal.pairSum < minPairSumSeen) minPairSumSeen = signal.pairSum;
   }
   if (result.evaluatedSignals === 0) {
     reject("no_recent_signals");
+  }
+  if (signals.length > 0) {
+    result._maxEdgeCents = maxEdgeCentsSeen;
+    result._minPairSum = minPairSumSeen;
   }
 
   const copiedSet = new Set(state.copiedKeys);

@@ -216,6 +216,8 @@ export interface StrategyDiagnostics {
   budgetUsedUsd: number;
   error?: string;
   timestamp: number;
+  maxEdgeCentsSeen?: number;
+  minPairSumSeen?: number;
 }
 
 export interface StrategyBreakdown {
@@ -411,6 +413,8 @@ function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
     budgetUsedUsd: Math.max(0, toFiniteNumber(raw.budgetUsedUsd, 0)),
     error: typeof raw.error === "string" ? raw.error : undefined,
     timestamp: Math.max(0, toFiniteNumber(raw.timestamp, Date.now())),
+    maxEdgeCentsSeen: typeof raw.maxEdgeCentsSeen === "number" ? raw.maxEdgeCentsSeen : undefined,
+    minPairSumSeen: typeof raw.minPairSumSeen === "number" ? raw.minPairSumSeen : undefined,
   };
 }
 

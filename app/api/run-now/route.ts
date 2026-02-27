@@ -190,6 +190,8 @@ export async function POST() {
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
       timestamp: Date.now(),
+      maxEdgeCentsSeen: result._maxEdgeCents,
+      minPairSumSeen: result._minPairSum,
     };
 
     const now = Date.now();
