@@ -10,6 +10,9 @@ import { getCashBalance } from "@/lib/copy-trade";
 
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const [config, state, cashBalance, recentActivity, paperStats, strategyDiagnosticsHistory] =
@@ -21,25 +24,28 @@ export async function GET() {
       getPaperStats(),
       getStrategyDiagnosticsHistory(),
     ]);
-    return NextResponse.json({
-      config,
-      state: {
-        lastTimestamp: state.lastTimestamp,
-        lastRunAt: state.lastRunAt,
-        lastCopiedAt: state.lastCopiedAt,
-        lastError: state.lastError,
-        lastStrategyDiagnostics: state.lastStrategyDiagnostics,
-        runsSinceLastClaim: state.runsSinceLastClaim,
-        lastClaimAt: state.lastClaimAt,
-        lastClaimResult: state.lastClaimResult,
-        safetyLatch: state.safetyLatch,
-        dailyRisk: state.dailyRisk,
+    return NextResponse.json(
+      {
+        config,
+        state: {
+          lastTimestamp: state.lastTimestamp,
+          lastRunAt: state.lastRunAt,
+          lastCopiedAt: state.lastCopiedAt,
+          lastError: state.lastError,
+          lastStrategyDiagnostics: state.lastStrategyDiagnostics,
+          runsSinceLastClaim: state.runsSinceLastClaim,
+          lastClaimAt: state.lastClaimAt,
+          lastClaimResult: state.lastClaimResult,
+          safetyLatch: state.safetyLatch,
+          dailyRisk: state.dailyRisk,
+        },
+        cashBalance,
+        recentActivity,
+        paperStats,
+        strategyDiagnosticsHistory,
       },
-      cashBalance,
-      recentActivity,
-      paperStats,
-      strategyDiagnosticsHistory,
-    });
+      { headers: { "Cache-Control": "no-store, no-cache, max-age=0" } }
+    );
   } catch (e) {
     console.error("Status error:", e);
     return NextResponse.json(
