@@ -24,29 +24,29 @@ fly launch --config fly.toml  # or fly deploy --config fly.toml
 fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
 ```
 
-#### 2) Ensure EU region and egress (required for Polymarket)
+#### 2) Ensure Mumbai region and egress (required for Polymarket)
 
-Polymarket blocks US-based IPs. You need both:
+Polymarket blocks US/EU-based IPs. You need both:
 
-**A) Machines in Stockholm** – run the migration script if you see US regions:
+**A) Machines in Mumbai (`bom`)** – run the migration script if you see US/EU regions:
 
 ```bash
-bash scripts/fly-migrate-to-eu.sh
+bash scripts/fly-migrate-to-bom.sh
 ```
 
-**B) Static egress IP in Stockholm** – Fly’s default IPv4 egress uses shared NAT and can use US IPs even when machines are in AMS. Allocate an Amsterdam egress IP so outbound requests (e.g. to Polymarket) use an EU IP. Use Stockholm (arn) - Amsterdam (ams) may be restricted:
+**B) Static egress IP in Mumbai (`bom`)** – Fly’s default IPv4 egress uses shared NAT and may still route through blocked locations. Allocate Mumbai egress so outbound requests to Polymarket use an allowed IP:
 
 ```bash
-fly ips allocate-egress -a polymarket-trader -r arn
+fly ips allocate-egress -a polymarket-trader -r bom
 ```
 
 This costs about $3.60/mo for IPv4. After allocation, existing machines may take a short time to use the new IP; redeploy if needed:
 
 ```bash
-fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region arn -y
+fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region bom -y
 ```
 
-Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = SE. Use the Fly URL, not localhost. Redis and the worker do not affect geoblock; only the web app’s outbound IP matters.
+Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = IN. Use the Fly URL, not localhost. Redis and the worker do not affect geoblock; only the web app’s outbound IP matters.
 
 #### 3) Add Redis
 

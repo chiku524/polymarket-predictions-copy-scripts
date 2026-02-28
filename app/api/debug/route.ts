@@ -62,7 +62,7 @@ export async function GET(request: Request) {
         region: geoblock.region,
         ip: geoblock.ip,
         note: geoblock.blocked
-          ? `Server IP is in restricted region (${geoblock.country}). Use a server in an allowed region (e.g. Fly.io EU).`
+          ? `Server IP is in restricted region (${geoblock.country}). Use a server in an allowed region (e.g. Fly.io Mumbai/bom).`
           : null,
       },
       _requestHost: new URL(request.url).host,
