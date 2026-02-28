@@ -93,6 +93,10 @@ export interface PairedStrategyResult {
   unresolvedExposureAssets: string[];
   copiedKeys: string[];
   copiedTrades: CopiedTrade[];
+  /** Best edge among evaluated signals (cents), for diagnostics */
+  _maxEdgeCents?: number;
+  /** Lowest pairSum among evaluated signals, for diagnostics */
+  _minPairSum?: number;
 }
 
 function toNum(v: unknown): number {
@@ -232,7 +236,7 @@ async function getRecentPairSignals(params: {
     cadence5m,
     cadence15m,
     cadenceHourly,
-    tradeLimit = 1000,
+    tradeLimit = 5000,
     maxConditionsToInspect = 120,
   } = params;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -286,8 +290,9 @@ async function getRecentPairSignals(params: {
   for (const conditionId of conditionIds) {
     const groupedSnapshot = grouped.get(conditionId);
     if (!groupedSnapshot) continue;
-    if (groupedSnapshot.byOutcome.size < 2) {
-      bumpReason(diagnostics, "missing_two_outcomes");
+    // Require at least 1 outcome from trades (we can use market token prices for the other)
+    if (groupedSnapshot.byOutcome.size < 1) {
+      bumpReason(diagnostics, "missing_any_outcome");
       continue;
     }
 
@@ -527,11 +532,20 @@ export async function runPairedStrategy(
   }
   const signals = signalBuild.signals;
   result.evaluatedSignals = signals.length;
+  let maxEdgeCentsSeen = -Infinity;
+  let minPairSumSeen = Infinity;
   for (const signal of signals) {
     bumpBreakdown(result.evaluatedBreakdown, signal);
+    const edgeCents = signal.edge * 100;
+    if (edgeCents > maxEdgeCentsSeen) maxEdgeCentsSeen = edgeCents;
+    if (signal.pairSum < minPairSumSeen) minPairSumSeen = signal.pairSum;
   }
   if (result.evaluatedSignals === 0) {
     reject("no_recent_signals");
+  }
+  if (signals.length > 0) {
+    result._maxEdgeCents = maxEdgeCentsSeen;
+    result._minPairSum = minPairSumSeen;
   }
 
   const copiedSet = new Set(state.copiedKeys);

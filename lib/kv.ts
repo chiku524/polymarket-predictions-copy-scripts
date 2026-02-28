@@ -51,9 +51,14 @@ function getRedis(): Redis | null {
   }
   if (!redis) {
     redis = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 1,
+      maxRetriesPerRequest: 5,
       enableAutoPipelining: true,
       lazyConnect: false,
+      connectTimeout: 10000,
+      retryStrategy(times) {
+        if (times > 5) return null;
+        return Math.min(times * 200, 2000);
+      },
     });
   }
   return redis;
@@ -122,8 +127,6 @@ export interface CopyTraderConfig {
   mode: TradingMode;
   /** Max % of wallet balance this bot can allocate per run */
   walletUsagePercent: number;
-  /** Legacy copy percentage (kept for historical compatibility / analysis only) */
-  copyPercent: number;
   /** Legacy max bet (kept for backward compatibility) */
   maxBetUsd: number;
   /** Paired strategy chunk size per signal (USD) */
@@ -152,9 +155,9 @@ export interface CopyTraderConfig {
   enableCadenceHourly: boolean;
   /** Min bet to place - skip if below (default 0.10) */
   minBetUsd: number;
-  /** Stop copying when cash balance falls below this (0 = disabled) */
+  /** Stop placing orders when cash balance falls below this (0 = disabled) */
   stopLossBalance: number;
-  /** When true, round bets below $1 up to $1 (Polymarket min) to copy smaller target bets (default true) */
+  /** When true, round small orders up to $1 (Polymarket minimum) */
   floorToPolymarketMin: boolean;
   /** Max unresolved one-leg imbalances allowed before circuit breaker halts run */
   maxUnresolvedImbalancesPerRun: number;
@@ -195,7 +198,7 @@ export interface CopyTraderState {
   lastCopiedAt?: number;
   lastError?: string;
   lastStrategyDiagnostics?: StrategyDiagnostics;
-  /** Incremented each copy-trade run; claim runs when this reaches CLAIM_EVERY_N_RUNS */
+  /** Incremented each strategy run; claim runs when this reaches CLAIM_EVERY_N_RUNS */
   runsSinceLastClaim?: number;
   lastClaimAt?: number;
   lastClaimResult?: { claimed: number; failed: number };
@@ -218,6 +221,8 @@ export interface StrategyDiagnostics {
   budgetUsedUsd: number;
   error?: string;
   timestamp: number;
+  maxEdgeCentsSeen?: number;
+  minPairSumSeen?: number;
 }
 
 export interface StrategyBreakdown {
@@ -275,14 +280,13 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   enabled: false,
   mode: "off",
   walletUsagePercent: 25,
-  copyPercent: 5,
   maxBetUsd: 3,
   pairChunkUsd: 3,
   pairMinEdgeCents: 0.5,
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
-  pairLookbackSeconds: 120,
+  pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   enableBtc: true,
   enableEth: true,
@@ -414,6 +418,8 @@ function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
     budgetUsedUsd: Math.max(0, toFiniteNumber(raw.budgetUsedUsd, 0)),
     error: typeof raw.error === "string" ? raw.error : undefined,
     timestamp: Math.max(0, toFiniteNumber(raw.timestamp, Date.now())),
+    maxEdgeCentsSeen: typeof raw.maxEdgeCentsSeen === "number" ? raw.maxEdgeCentsSeen : undefined,
+    minPairSumSeen: typeof raw.minPairSumSeen === "number" ? raw.minPairSumSeen : undefined,
   };
 }
 
@@ -434,7 +440,6 @@ function sanitizeConfig(
       1,
       100
     ),
-    copyPercent: clamp(toFiniteNumber(raw.copyPercent, current.copyPercent), 1, 100),
     maxBetUsd: clamp(toFiniteNumber(raw.maxBetUsd, current.maxBetUsd), 1, 10000),
     pairChunkUsd: clamp(toFiniteNumber(raw.pairChunkUsd, current.pairChunkUsd), 1, 10000),
     pairMinEdgeCents: clamp(
@@ -528,7 +533,6 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     enabled: mode !== "off",
     walletUsagePercent:
       c.walletUsagePercent ?? c.walletPercent ?? DEFAULT_CONFIG.walletUsagePercent,
-    copyPercent: c.copyPercent ?? c.minPercent ?? DEFAULT_CONFIG.copyPercent,
     maxBetUsd: c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd,
     pairChunkUsd: c.pairChunkUsd ?? c.maxBetUsd ?? DEFAULT_CONFIG.pairChunkUsd,
     pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,

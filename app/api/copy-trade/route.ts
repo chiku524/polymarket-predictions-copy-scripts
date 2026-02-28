@@ -187,6 +187,8 @@ async function runCopyTradeHandler() {
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
       timestamp: Date.now(),
+      maxEdgeCentsSeen: result._maxEdgeCents,
+      minPairSumSeen: result._minPairSum,
     };
     const now = Date.now();
     let safetyLatch = state.safetyLatch;
@@ -291,7 +293,7 @@ async function runCopyTradeHandler() {
     });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
-    console.error("Copy trade error:", e);
+    console.error("Strategy run error:", e);
     return NextResponse.json({ ok: false, error: err }, { status: 500 });
   } finally {
     await releaseRunLock(lockToken).catch((e) => {

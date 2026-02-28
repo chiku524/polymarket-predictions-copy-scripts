@@ -2,54 +2,84 @@
 
 Run your own BTC/ETH Up-Down paired strategy on Polymarket with **Off / Paper / Live** modes, wallet budget caps, and paper analytics before going live.
 
-## Web UI (Railway)
+## Web UI (Fly.io)
 
 A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**), adjust sizing, cap wallet usage per run, and run manually.
 
-### Deploy to Railway (single platform, two services)
+### Deploy to Fly.io (two apps: web + worker)
 
-Use one Railway project with:
-- **Service A (web)**: Next.js UI + API routes
-- **Service B (worker)**: persistent strategy worker loop
+Use two Fly.io apps from this repo:
+- **polymarket-trader** (web): Next.js UI + API routes
+- **polymarket-trader-worker**: persistent strategy worker loop
 
-Both services can point to this same repo.
+#### 1) Create apps and deploy
 
-#### 1) Create services from this repo
+**Web app:**
+```bash
+fly launch --config fly.toml  # or fly deploy --config fly.toml
+```
 
-- **web service**
-  - Dockerfile path: `Dockerfile`
-  - Exposes port `3000`
-- **worker service**
-  - Dockerfile path: `Dockerfile.worker`
-  - Runs `npm run worker`
+**Worker app (after web is live):**
+```bash
+fly launch --config fly.worker.toml  # or fly deploy --config fly.worker.toml
+```
 
-#### 2) Add Redis in Railway
+#### 2) Ensure EU region and egress (required for Polymarket)
 
-- Add a Railway Redis service in the same project.
-- Share Redis env vars with both services (`REDIS_URL` and/or `REDIS_PRIVATE_URL`).
-- This app now uses Redis directly (no Vercel KV dependency required).
+Polymarket blocks US-based IPs. You need both:
 
-#### 3) Set environment variables
+**A) Machines in Stockholm** – run the migration script if you see US regions:
 
-For **web service**:
-- `PRIVATE_KEY` – Your wallet private key
-- `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
-- `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
-- `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
-- `CRON_SECRET` – shared secret used by worker when calling `/api/copy-trade`
-- optional claiming vars:
-  - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE`
-  - or aliases: `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`
-- optional: `POLYGON_RPC_URL`, `CLAIM_EVERY_N_RUNS`
-- optional alerts: `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TOKEN`
+```bash
+bash scripts/fly-migrate-to-eu.sh
+```
 
-For **worker service**:
-- `APP_BASE_URL` – public URL of your Railway web service
-- `CRON_SECRET` – must match web service
-- optional: `WORKER_INTERVAL_MS` (default `15000`)
-- optional: `WORKER_REQUEST_TIMEOUT_MS` (default `70000`)
+**B) Static egress IP in Stockholm** – Fly’s default IPv4 egress uses shared NAT and can use US IPs even when machines are in AMS. Allocate an Amsterdam egress IP so outbound requests (e.g. to Polymarket) use an EU IP. Use Stockholm (arn) - Amsterdam (ams) may be restricted:
 
-#### 4) Claiming winnings
+```bash
+fly ips allocate-egress -a polymarket-trader -r arn
+```
+
+This costs about $3.60/mo for IPv4. After allocation, existing machines may take a short time to use the new IP; redeploy if needed:
+
+```bash
+fly deploy -a polymarket-trader -c fly.toml --remote-only --depot=false --primary-region arn -y
+```
+
+Verify with **Diagnostics & debug**: geoblock should show `blocked: false`, `country` = SE. Use the Fly URL, not localhost. Redis and the worker do not affect geoblock; only the web app’s outbound IP matters.
+
+#### 3) Add Redis
+
+- Use [Fly.io Redis](https://fly.io/docs/reference/redis/) or an external Redis (Upstash, etc.).
+- Set `REDIS_URL` on the **web app** (`polymarket-trader`). The worker does not use Redis.
+
+#### 4) Set secrets (both apps)
+
+```bash
+fly secrets set PRIVATE_KEY=... MY_ADDRESS=... SIGNATURE_TYPE=1 CRON_SECRET=... REDIS_URL=...
+```
+
+Optional: `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE`, `POLYGON_RPC_URL`, `CLAIM_EVERY_N_RUNS`, `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TOKEN`.
+
+**Worker app only:** `APP_BASE_URL` (e.g. `https://polymarket-trader.fly.dev`). It’s pre-set in `fly.worker.toml` for the default app name; adjust if your web app URL differs.
+
+#### 5) GitHub Actions (optional)
+
+`.github/workflows/fly-deploy.yml` deploys the web app and worker on push to `main`.
+
+**Token setup (required for CI deploys):** You need an org-scoped token (or two app-scoped tokens) because the workflow deploys two apps.
+
+- **Option A – Org-scoped (recommended):** Deploy both apps with one token:
+  ```bash
+  fly tokens create org --name "github-actions" -x 999999h
+  ```
+  Copy the full output (including `FlyV1` and space). Add it as repo secret `FLY_API_TOKEN` in GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+
+- **Option B – App-scoped:** Create one token per app, then use two secrets (`FLY_API_TOKEN` for web, `FLY_API_TOKEN_WORKER` for worker) and update the workflow to use the appropriate token per job.
+
+If you get `Error: unauthorized`, verify: (1) the secret exists and is spelled `FLY_API_TOKEN`, (2) the token was copied in full, (3) you used an org-scoped token (or matching app-scoped tokens).
+
+#### 6) Claiming winnings
 
 Resolved positions must be claimed to move winnings into available cash:
 - app auto-claims every `CLAIM_EVERY_N_RUNS` (default 10)
@@ -66,7 +96,7 @@ Requires Redis (set `REDIS_URL` locally).
 
 ### Persistent worker (recommended over cron)
 
-Instead of cron, you can run an always-on worker that continuously triggers `/api/copy-trade`.
+Instead of cron, you can run an always-on worker that continuously triggers the strategy run endpoint.
 
 1. Set env vars for the worker process:
    - `APP_BASE_URL` (e.g. `https://your-app-domain.com`)
@@ -95,79 +125,23 @@ To avoid duplicate triggers, run **either** cron **or** worker (not both).
 
 ---
 
-## Python Script (Standalone)
-
 ## Is This Doable?
 
 **Yes.** The public Polymarket API supports everything needed:
 
 | Need | API | Endpoint |
 |------|-----|----------|
-| Target user's trades | Data API | `GET /activity` |
 | Your cash balance | Data API | `GET /v1/accounting/snapshot` |
 | Place orders | CLOB API | `POST /order` (auth required) |
 
 Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/overview)
 
-## Setup
-
-1. **Install dependencies**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Create `.env`**
-
-   ```bash
-   cp config.example.env .env
-   ```
-
-3. **Edit `.env`**
-
-   - `PRIVATE_KEY` – Your wallet private key (from [reveal.polymarket.com](https://reveal.polymarket.com) or your wallet)
-   - `MY_ADDRESS` – Your Polymarket proxy/funder address (profile dropdown)
-   - `SIGNATURE_TYPE` – `0` EOA, `1` Email/Magic, `2` Browser wallet
-   - `TARGET_ADDRESS` – Address to copy (default: gabagool22’s proxy)
-
-## Run
-
-```bash
-python copy_trader.py
-```
-
-The script will:
-
-1. Sync to the target’s latest trades (no historical copies on first run)
-2. Poll every 15 seconds for new trades
-3. For each new trade, place a market order sized at 5–10% of your cash balance based on odds
-4. Use FOK (Fill-Or-Kill) orders for immediate execution
-
-## Position Sizing
-
-- **5%** at price 0 (long shot)
-- **10%** at price 1 (favorite)
-- Linear interpolation in between
-
-Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
-
-## Limitations
-
-- **Latency**: Data API is on-chain. There is a delay (typically ~30–60 seconds) before trades appear.
-- **Geographic restrictions**: Polymarket enforces geo-blocking; check [geoblocking docs](https://docs.polymarket.com/developers/CLOB/geoblock).
-- **Token allowances**: EOA/MetaMask users must set allowances before trading. See the [py-clob-client README](https://github.com/Polymarket/py-clob-client#important-token-allowances-for-metamaskeoa-users).
-
 ## Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MY_ADDRESS` | `0x370e...` | Your Polymarket wallet |
-| `TARGET_ADDRESS` | `0x6031...` | gabagool22’s wallet |
-| `MIN_PERCENT` | `0.05` | Min % of balance per bet |
-| `MAX_PERCENT` | `0.10` | Max % of balance per bet |
-| `POLL_INTERVAL` | `15` | Seconds between checks |
-| `MIN_BET_USD` | `1.0` | Minimum bet size (USDC) |
-| `CRON_SECRET` | — | Required for worker-to-web auth (random string) |
+| Variable | Description |
+|----------|-------------|
+| `MY_ADDRESS` | Your Polymarket proxy/funder address |
+| `CRON_SECRET` | Required for worker-to-web auth (random string) |
 
 ### UI Controls (Web App)
 

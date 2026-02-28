@@ -18,6 +18,18 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}): Promise<Re
   }
 }
 
+async function safeJson<T = unknown>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text || !text.trim()) {
+    throw new Error(res.ok ? "Empty response" : `Request failed (${res.status})`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(res.ok ? "Invalid response format" : `Request failed (${res.status}): ${text.slice(0, 80)}`);
+  }
+}
+
 function useDebouncedCallback<A extends unknown[]>(
   fn: (...args: A) => void,
   delay: number
@@ -79,7 +91,6 @@ interface Config {
   enableCadence5m: boolean;
   enableCadence15m: boolean;
   enableCadenceHourly: boolean;
-  copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
   stopLossBalance: number;
@@ -138,6 +149,8 @@ interface StrategyDiagnostics {
   budgetUsedUsd: number;
   error?: string;
   timestamp: number;
+  maxEdgeCentsSeen?: number;
+  minPairSumSeen?: number;
 }
 
 interface Status {
@@ -235,6 +248,9 @@ export default function Home() {
   const [activePage, setActivePage] = useState(0);
   const [resolvedPage, setResolvedPage] = useState(0);
   const [trendRuns, setTrendRuns] = useState(20);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showDiagnosticsTrend, setShowDiagnosticsTrend] = useState(false);
+  const [mainTab, setMainTab] = useState<"betting" | "positions" | "analytics">("betting");
   const configUpdatedAtRef = useRef<number>(0);
   const configRef = useRef<Config | null>(null);
 
@@ -247,8 +263,8 @@ export default function Home() {
       ]);
       if (!statusRes.ok) throw new Error("Failed to load status");
       if (!positionsRes.ok) throw new Error("Failed to load positions");
-      const statusData = await statusRes.json();
-      const positionsData = await positionsRes.json();
+      const statusData = (await safeJson(statusRes)) as Status;
+      const positionsData = (await safeJson(positionsRes)) as { active?: Position[]; resolved?: Position[] };
       setStatus((prev) => {
         if (!prev) {
           if (statusData.config) configRef.current = statusData.config;
@@ -268,7 +284,7 @@ export default function Home() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const isAbort = e instanceof Error && e.name === "AbortError";
-      setError(isAbort ? "Request timed out. Railway may be cold starting." : msg);
+      setError(isAbort ? "Request timed out. Your hosting provider may be cold starting." : msg);
     } finally {
       setLoading(false);
     }
@@ -302,8 +318,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      const data = (await safeJson(res)) as Config;
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Failed to save");
       configRef.current = data;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
@@ -325,7 +341,17 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/run-now`, { method: "POST" });
-      const data = await res.json();
+      const data = (await safeJson(res)) as {
+        error?: string;
+        skipped?: boolean;
+        reason?: string;
+        mode?: string;
+        paper?: number;
+        copied?: number;
+        simulatedVolumeUsd?: number;
+        eligibleSignals?: number;
+        evaluatedSignals?: number;
+      };
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
@@ -344,9 +370,10 @@ export default function Home() {
         }
       } else if (data.mode === "paper") {
         const simVolume = Number(data.simulatedVolumeUsd ?? 0);
-        if (data.paper > 0) {
+        const paperCount = data.paper ?? 0;
+        if (paperCount > 0) {
           setRunResult(
-            `Paper simulated ${data.paper} pair${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
+            `Paper simulated ${paperCount} pair${paperCount === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
           );
         } else {
           const eligible = Number(data.eligibleSignals ?? 0);
@@ -355,7 +382,7 @@ export default function Home() {
         }
       } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
         setRunResult(data.error);
-      } else if (data.copied > 0) {
+      } else if ((data.copied ?? 0) > 0) {
         setRunResult(`Executed ${data.copied} paired signal${data.copied === 1 ? "" : "s"}`);
       } else {
         const eligible = Number(data.eligibleSignals ?? 0);
@@ -378,8 +405,8 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/reset-sync`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Reset failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Reset failed");
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reset failed");
@@ -394,8 +421,8 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/paper-stats`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Reset paper stats failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Reset paper stats failed");
       await fetchAll(true);
       setRunResult("Paper analytics reset");
       setTimeout(() => setRunResult(null), 4000);
@@ -413,16 +440,17 @@ export default function Home() {
     try {
       const base = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetchWithTimeout(`${base}/api/claim-now`, { method: "POST" });
-      const data = await res.json();
+      const data = (await safeJson(res)) as { error?: string; claimed?: number; errors?: string[] };
       if (!res.ok) throw new Error(data.error ?? "Claim failed");
       await fetchAll(true);
-      if (data.claimed > 0) {
-        setClaimResult(`Claimed ${data.claimed} position${data.claimed === 1 ? "" : "s"}`);
-      } else if (data.claimed === 0 && !data.error) {
+      const claimed = data.claimed ?? 0;
+      if (claimed > 0) {
+        setClaimResult(`Claimed ${claimed} position${claimed === 1 ? "" : "s"}`);
+      } else if (claimed === 0 && !data.error) {
         setClaimResult("No redeemable positions to claim");
       }
       if (data.errors?.length) {
-        setClaimResult((prev) => (prev ? `${prev}. ${data.errors[0]}` : data.errors[0]));
+        setClaimResult((prev) => (prev ? `${prev}. ${data.errors![0]}` : data.errors![0]));
       }
       setTimeout(() => setClaimResult(null), 5000);
     } catch (e) {
@@ -445,8 +473,8 @@ export default function Home() {
           price: pos.curPrice > 0 ? pos.curPrice : 0.5,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Cashout failed");
+      const data = (await safeJson(res)) as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? "Cashout failed");
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cashout failed");
@@ -465,39 +493,42 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
-      const nextConfig = {
-        ...(status?.config ?? {
-          enabled: false,
-          mode: "off" as const,
-          walletUsagePercent: 25,
-          pairChunkUsd: 3,
-          pairMinEdgeCents: 0.5,
-          pairMinEdgeCents5m: 0.5,
-          pairMinEdgeCents15m: 0.5,
-          pairMinEdgeCentsHourly: 0.5,
-          pairLookbackSeconds: 120,
-          pairMaxMarketsPerRun: 4,
-          enableBtc: true,
-          enableEth: true,
-          enableCadence5m: true,
-          enableCadence15m: true,
-          enableCadenceHourly: true,
-          copyPercent: 5,
-          maxBetUsd: 3,
-          minBetUsd: 0.1,
-          stopLossBalance: 0,
-          maxUnresolvedImbalancesPerRun: 1,
-          unwindSellSlippageCents: 3,
-          unwindShareBufferPct: 99,
-          maxDailyLiveNotionalUsd: 0,
-          maxDailyDrawdownUsd: 0,
-        }),
-        [field]: clamped,
+      const base = status?.config ?? {
+        enabled: false,
+        mode: "off" as const,
+        walletUsagePercent: 25,
+        pairChunkUsd: 3,
+        pairMinEdgeCents: 0.5,
+        pairMinEdgeCents5m: 0.5,
+        pairMinEdgeCents15m: 0.5,
+        pairMinEdgeCentsHourly: 0.5,
+        pairLookbackSeconds: 120,
+        pairMaxMarketsPerRun: 4,
+        enableBtc: true,
+        enableEth: true,
+        enableCadence5m: true,
+        enableCadence15m: true,
+        enableCadenceHourly: true,
+        maxBetUsd: 3,
+        minBetUsd: 0.1,
+        stopLossBalance: 0,
+        maxUnresolvedImbalancesPerRun: 1,
+        unwindSellSlippageCents: 3,
+        unwindShareBufferPct: 99,
+        maxDailyLiveNotionalUsd: 0,
+        maxDailyDrawdownUsd: 0,
       };
+      const updates: Partial<Config> = { [field]: clamped };
+      if (field === "pairMinEdgeCents") {
+        updates.pairMinEdgeCents5m = clamped;
+        updates.pairMinEdgeCents15m = clamped;
+        updates.pairMinEdgeCentsHourly = clamped;
+      }
+      const nextConfig = { ...base, ...updates };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
-      debouncedUpdateConfig({ [field]: clamped });
+      debouncedUpdateConfig(updates);
     },
     [debouncedUpdateConfig, status?.config]
   );
@@ -539,7 +570,6 @@ export default function Home() {
     enableCadence5m: true,
     enableCadence15m: true,
     enableCadenceHourly: true,
-    copyPercent: 5,
     maxBetUsd: 3,
     minBetUsd: 0.1,
     stopLossBalance: 0,
@@ -777,20 +807,53 @@ export default function Home() {
     setTimeout(() => setRunResult(null), 4500);
   };
 
+  const lastRunAgo = status?.state.lastRunAt
+    ? Math.floor((Date.now() - status.state.lastRunAt) / 1000)
+    : null;
+  const workerStatusText =
+    lastRunAgo === null
+      ? "No runs yet"
+      : lastRunAgo < 60
+        ? `Last run ${lastRunAgo}s ago`
+        : lastRunAgo < 3600
+          ? `Last run ${Math.floor(lastRunAgo / 60)}m ago`
+          : `Last run ${Math.floor(lastRunAgo / 3600)}h ago`;
+
+  const tabs = [
+    { id: "betting" as const, label: "Betting" },
+    { id: "positions" as const, label: "Positions" },
+    { id: "analytics" as const, label: "Analytics" },
+  ] as const;
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-2xl mx-auto p-6 md:p-8">
+      <div className="max-w-2xl mx-auto p-4 sm:p-6 md:p-8">
         {/* Header */}
-        <header className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">Polymarket Paired Trader</h1>
-          <p className="mt-1 text-zinc-500">
-            Running <span className="text-emerald-400">paired BTC/ETH Up-Down strategy</span> on your account
-          </p>
+        <header className="mb-4">
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-zinc-100">Polymarket Paired Trader</h1>
+          <p className="mt-0.5 text-xs text-zinc-500">BTC/ETH Up–Down · {cfg.mode}</p>
         </header>
 
+        {/* Tab nav */}
+        <nav className="mb-6 flex gap-0.5 p-0.5 rounded-lg bg-zinc-900/60 border border-zinc-800/50">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setMainTab(tab.id)}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                mainTab === tab.id
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
         {error && (
-          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-4">
-            <p className="text-sm text-red-400 flex-1">{error}</p>
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3">
+            <p className="text-sm text-red-400 flex-1 min-w-0">{error}</p>
             <button
               onClick={() => setError(null)}
               className="text-xs text-red-400 hover:text-red-300 shrink-0"
@@ -801,109 +864,92 @@ export default function Home() {
         )}
 
         {safetyLatch?.active && (
-          <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30">
-            <p className="text-sm text-red-300 font-medium">
-              Safety latch is active (live trading blocked until resolved)
-            </p>
-            <p className="text-xs text-red-300/90 mt-1">{safetyLatch.reason}</p>
-            <p className="text-xs text-red-400/80 mt-1">
-              Triggered: {new Date(safetyLatch.triggeredAt).toLocaleString()} · Attempts: {safetyLatch.attempts}
-              {safetyLatch.unresolvedAssets?.length
-                ? ` · Assets: ${safetyLatch.unresolvedAssets.join(", ")}`
-                : ""}
-            </p>
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-300 font-medium">Safety latch active</p>
+            <p className="text-xs text-red-300/90 mt-0.5">{safetyLatch.reason}</p>
             <p className="text-xs text-zinc-500 mt-1">
-              Use <strong>Reset sync</strong> only after you confirm residual exposure is resolved.
+              Resolve exposure first, then use <strong>Reset sync</strong>.
             </p>
           </div>
         )}
 
-        {/* Note: no need to keep UI open */}
-        <p className="mb-4 text-xs text-zinc-500">
-          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker or cron can call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> to run each cycle.
-        </p>
-
-        {/* Balance + Control bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-8 p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/60">
-          <div>
-            <p className="text-xs text-zinc-500 uppercase tracking-wider">Cash balance</p>
-            <p className="text-2xl font-semibold text-emerald-400">
-              ${(status?.cashBalance ?? 0).toFixed(2)}
-            </p>
-            <p className="text-xs text-zinc-500 mt-1">
-              Mode: <span className="uppercase text-zinc-300">{cfg.mode}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 rounded-lg bg-zinc-800/70 p-1">
-              {(["off", "paper", "live"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setMode(mode)}
-                  disabled={saving}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium uppercase tracking-wide transition-colors disabled:opacity-50 ${
-                    cfg.mode === mode
-                      ? mode === "live"
-                        ? "bg-emerald-500/30 text-emerald-300"
-                        : mode === "paper"
-                          ? "bg-sky-500/30 text-sky-300"
-                          : "bg-zinc-700 text-zinc-200"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={runNow}
-                  disabled={running}
-                  className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-sm font-medium disabled:opacity-50 transition-colors"
-                >
-                  {running ? "Running…" : "Run now"}
-                </button>
-                <button
-                  onClick={claimNow}
-                  disabled={claiming}
-                  className="px-3 py-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-400 text-sm disabled:opacity-50 transition-colors"
-                >
-                  {claiming ? "Claiming…" : "Claim now"}
-                </button>
-                <button
-                  onClick={resetSync}
-                  disabled={resetting}
-                  className="px-3 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-sm disabled:opacity-50 transition-colors"
-                >
-                  {resetting ? "Resetting…" : "Reset sync"}
-                </button>
+        {/* Control bar - always visible */}
+        <section className="mb-5 p-3 sm:p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/40">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex gap-0.5 p-0.5 rounded-md bg-zinc-800/80">
+                {(["off", "paper", "live"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setMode(mode)}
+                    disabled={saving}
+                    className={`px-3 py-1.5 rounded text-xs font-medium uppercase transition-all disabled:opacity-50 ${
+                      cfg.mode === mode
+                        ? mode === "live"
+                          ? "bg-emerald-500/50 text-emerald-100"
+                          : mode === "paper"
+                            ? "bg-sky-500/50 text-sky-100"
+                            : "bg-zinc-700 text-zinc-200"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
               </div>
-              {(runResult || claimResult) && (
-                <span className="text-xs text-emerald-400/90">{runResult || claimResult}</span>
-              )}
+              <span className="text-sm text-zinc-400">
+                Balance <span className="font-medium text-emerald-400">${(status?.cashBalance ?? 0).toFixed(2)}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={runNow}
+                disabled={running}
+                className="px-3 py-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-sm font-medium disabled:opacity-50"
+              >
+                {running ? "Running…" : "Run now"}
+              </button>
+              <button onClick={claimNow} disabled={claiming} className="px-2.5 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-400 text-sm disabled:opacity-50">
+                {claiming ? "…" : "Claim"}
+              </button>
+              <button onClick={resetSync} disabled={resetting} className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-sm disabled:opacity-50">
+                {resetting ? "…" : "Reset"}
+              </button>
             </div>
           </div>
-        </div>
+          <p className="text-[11px] text-zinc-500 mt-2">{workerStatusText}{(runResult || claimResult) && ` · ${runResult || claimResult}`}</p>
+        </section>
 
-        {/* Settings */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Trade controls</h2>
-            <button
-              onClick={applyPaperBaselinePreset}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
-            >
-              Apply paper high-data preset
-            </button>
+        {/* Betting tab */}
+        {mainTab === "betting" && (
+        <>
+        {/* Trade controls */}
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-zinc-300">Betting parameters</h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                {showAdvanced ? "−" : "+"} Advanced
+              </button>
+              <button
+                onClick={applyPaperBaselinePreset}
+                disabled={saving}
+                className="px-2.5 py-1 rounded-md bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs disabled:opacity-40"
+              >
+                Paper high-data preset
+              </button>
+            </div>
           </div>
-          <p className="text-sm text-zinc-400 mb-4">
-            Running paired Up/Down strategy on <strong>{selectedCoins}</strong> with cadences <strong>{selectedCadences}</strong>. Chunk size <strong>${cfg.pairChunkUsd}</strong>, default min edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, cadence min edges <strong>{cadenceEdgeSummary}</strong>, wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run, guardrails <strong>{guardrailSummary}</strong>, daily caps <strong>{dailyCapSummary}</strong>.
+          <p className="text-xs text-zinc-500 mb-5">
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {cfg.walletUsagePercent}% cap
           </p>
-          <div className="flex flex-wrap gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Default min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Min edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -921,10 +967,11 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Fallback when cadence-specific values are unavailable</p>
             </div>
+            {showAdvanced && (
+            <>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">5m min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">5m edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -944,7 +991,7 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">15m min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">15m edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -964,7 +1011,7 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Hourly min edge (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Hourly edge (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -983,8 +1030,10 @@ export default function Home() {
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
+            </>
+            )}
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Pair chunk (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Pair chunk ($)</p>
               <input
                 type="number"
                 min={1}
@@ -1002,10 +1051,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Target spend per paired signal</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Wallet usage % / run</p>
+              <p className="text-xs text-zinc-500 mb-1">Wallet %</p>
               <input
                 type="number"
                 min={1}
@@ -1023,31 +1071,29 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Caps spend per run in Live/Paper</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Signal lookback (sec)</p>
+              <p className="text-xs text-zinc-500 mb-1">Lookback (s)</p>
               <input
                 type="number"
                 min={20}
-                max={900}
+                max={1800}
                 step={5}
                 value={cfg.pairLookbackSeconds}
                 onChange={(e) =>
                   handleNumericConfigChange(
                     "pairLookbackSeconds",
-                    parseInt(e.target.value, 10) || 120,
+                    parseInt(e.target.value, 10) || 600,
                     20,
-                    900
+                    1800
                   )
                 }
                 disabled={saving}
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Recent global trades used for signals</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max pairs / run</p>
+              <p className="text-xs text-zinc-500 mb-1">Max pairs</p>
               <input
                 type="number"
                 min={1}
@@ -1066,7 +1112,7 @@ export default function Home() {
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 col-span-2">
               <button
                 role="switch"
                 aria-checked={cfg.floorToPolymarketMin !== false}
@@ -1087,11 +1133,10 @@ export default function Home() {
               </button>
               <div>
                 <p className="text-xs text-zinc-500">Floor to $1</p>
-                <p className="text-xs text-zinc-600">Round small paired legs up to Polymarket min order</p>
               </div>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Min bet (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Min bet ($)</p>
               <input
                 type="number"
                 min={0.1}
@@ -1110,7 +1155,7 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Stop-loss (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Stop-loss ($)</p>
               <input
                 type="number"
                 min={0}
@@ -1128,10 +1173,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max daily live notional (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Daily notional cap ($)</p>
               <input
                 type="number"
                 min={0}
@@ -1149,10 +1193,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Hard cap on cumulative live notional per UTC day</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max daily drawdown (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Daily drawdown cap ($)</p>
               <input
                 type="number"
                 min={0}
@@ -1170,10 +1213,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Blocks live runs when day-start balance drawdown exceeds cap</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max unresolved imbalances/run</p>
+              <p className="text-xs text-zinc-500 mb-1">Max imbalances/run</p>
               <input
                 type="number"
                 min={1}
@@ -1191,10 +1233,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Live circuit breaker threshold</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Unwind slippage (cents)</p>
+              <p className="text-xs text-zinc-500 mb-1">Unwind slippage (¢)</p>
               <input
                 type="number"
                 min={0}
@@ -1212,10 +1253,9 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Price cushion used when unwinding failed pairs</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Unwind share buffer %</p>
+              <p className="text-xs text-zinc-500 mb-1">Unwind buffer %</p>
               <input
                 type="number"
                 min={50}
@@ -1233,9 +1273,8 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Portion of estimated shares sent to unwind SELL</p>
             </div>
-            <div className="min-w-[220px]">
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
               <p className="text-xs text-zinc-500 mb-1">Coins</p>
               <div className="flex items-center gap-2 rounded-lg bg-zinc-900/70 border border-zinc-800 p-1">
                 <button
@@ -1262,7 +1301,7 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <div className="min-w-[280px]">
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
               <p className="text-xs text-zinc-500 mb-1">Cadence filters</p>
               <div className="flex items-center gap-2 rounded-lg bg-zinc-900/70 border border-zinc-800 p-1">
                 <button
@@ -1299,7 +1338,6 @@ export default function Home() {
                   Hourly
                 </button>
               </div>
-              <p className="text-xs text-zinc-500 mt-0.5">Other cadences are ignored in Phase 1.</p>
             </div>
           </div>
           {dailyRisk && (
@@ -1315,9 +1353,14 @@ export default function Home() {
             </div>
           )}
         </section>
+        </>
+        )}
 
+        {/* Analytics tab */}
+        {mainTab === "analytics" && (
+        <>
         {/* Paper analytics */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
           <div className="flex items-center justify-between gap-3 mb-4">
             <div>
               <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
@@ -1363,7 +1406,7 @@ export default function Home() {
         </section>
 
         {/* Strategy diagnostics */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
             Strategy diagnostics (last run)
           </h2>
@@ -1393,7 +1436,10 @@ export default function Home() {
               </div>
               <p className="text-xs text-zinc-500 mb-3">
                 Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
-                Updated: {new Date(lastDiag.timestamp).toLocaleString()}
+                {lastDiag.maxEdgeCentsSeen != null && (
+                  <> Best edge seen: <span className={lastDiag.maxEdgeCentsSeen < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.maxEdgeCentsSeen.toFixed(2)}¢</span> ·</>
+                )}
+                {" "}Updated: {new Date(lastDiag.timestamp).toLocaleString()}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
                 <div className="rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-2">
@@ -1440,6 +1486,18 @@ export default function Home() {
                       </span>
                     </div>
                   ))}
+                  {rejectedEntries.some(([r]) => r === "no_recent_signals") && (
+                    <p className="text-xs text-amber-400/90 mt-2 px-2">
+                      Tip: No BTC/ETH Up-Down trades in the lookback window. Increase &quot;Lookback (s)&quot; to 600 in settings.
+                    </p>
+                  )}
+                  {rejectedEntries.some(([r]) => r.startsWith("edge_below_threshold")) && (
+                    <p className="text-xs text-amber-400/90 mt-2 px-2">
+                      {lastDiag?.maxEdgeCentsSeen != null && lastDiag.maxEdgeCentsSeen < 0
+                        ? `All signals have negative edge (best: ${lastDiag.maxEdgeCentsSeen.toFixed(2)}¢, pairSum ${(lastDiag.minPairSumSeen ?? 0).toFixed(4)}). No profitable opportunities in current market—prices sum above $1.`
+                        : "Lower \"Min edge (¢)\" for 5m, 15m, and Hourly to match the base (e.g. 0.3) so more signals qualify."}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-zinc-600">No rejections recorded in last run.</p>
@@ -1451,16 +1509,25 @@ export default function Home() {
         </section>
 
         {/* Strategy diagnostics trend */}
-        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
+          <button
+            type="button"
+            onClick={() => setShowDiagnosticsTrend((v) => !v)}
+            className="w-full flex flex-wrap items-center justify-between gap-3 mb-3 text-left"
+          >
             <div>
               <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
                 Strategy diagnostics trend
               </h2>
-              <p className="text-xs text-zinc-600 mt-1">
-                Last-N run rollup for tuning and Phase 2 calibration.
+              <p className="text-xs text-zinc-600 mt-0.5">
+                {showDiagnosticsTrend ? "Last-N run rollup for tuning" : `Last ${trendRuns} runs · Click to expand`}
               </p>
             </div>
+            <span className="text-zinc-500 text-sm">{showDiagnosticsTrend ? "−" : "+"}</span>
+          </button>
+          {showDiagnosticsTrend && (
+          <>
+          <div className="flex flex-wrap items-center justify-end gap-3 mb-3">
             <label className="text-xs text-zinc-500 flex items-center gap-2">
               Last
               <select
@@ -1642,13 +1709,20 @@ export default function Home() {
               No diagnostics history yet. Run the strategy a few cycles to populate trends.
             </p>
           )}
+          </>
+          )}
         </section>
+        </>
+        )}
 
+        {/* Positions tab */}
+        {mainTab === "positions" && (
+        <>
         {/* Recent activity */}
         {activity.length > 0 && (
           <section className="mb-8">
-            <h2 className="text-sm font-medium text-zinc-400 mb-3">
-              {cfg.mode === "paper" ? "Recently simulated" : "Recently executed"}
+            <h2 className="text-sm font-medium text-zinc-300 mb-3">
+              {cfg.mode === "paper" ? "Recent (simulated)" : "Recent activity"}
             </h2>
             <div className="space-y-2">
               {activity.slice(0, 8).map((a, i) => (
@@ -1672,9 +1746,9 @@ export default function Home() {
         )}
 
         {/* Positions */}
-        <section>
+        <section className="space-y-6">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-zinc-400">Your positions</h2>
+            <h2 className="text-sm font-medium text-zinc-300">Positions</h2>
             <div className="flex rounded-lg bg-zinc-800/60 p-0.5">
               <button
                 onClick={() => { setPositionTab("active"); setActivePage(0); }}
@@ -1812,16 +1886,20 @@ export default function Home() {
             );
           })()}
         </section>
+        </>
+        )}
 
         {/* Status footer */}
-        <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500">
-          Last run: {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
+        <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500 space-y-0.5">
+          <p>
+          Last run {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
           Last execution: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
           {" · "}
           Last claim: {status?.state.lastClaimAt ? new Date(status.state.lastClaimAt).toLocaleString() : "—"}
           {status?.state.lastClaimResult && (
             <span> ({status.state.lastClaimResult.claimed} claimed)</span>
           )}
+          </p>
           {status?.state.runsSinceLastClaim != null && (
             <span className="block mt-0.5 text-zinc-600">Claim runs every 10 strategy runs ({status.state.runsSinceLastClaim}/10)</span>
           )}
@@ -1832,9 +1910,9 @@ export default function Home() {
             href={typeof window !== "undefined" ? `${window.location.origin}/api/debug` : "/api/debug"}
             target="_blank"
             rel="noopener noreferrer"
-            className="block mt-2 text-zinc-500 hover:text-zinc-400"
+            className="inline-block mt-2 text-zinc-500 hover:text-zinc-300"
           >
-            Debug
+            Diagnostics & debug →
           </a>
         </footer>
 

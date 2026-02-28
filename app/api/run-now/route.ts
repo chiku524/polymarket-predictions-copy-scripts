@@ -30,7 +30,7 @@ export const maxDuration = 60;
 /** GET returns instructions - use POST from the Run now button */
 export async function GET() {
   return NextResponse.json(
-    { message: "Use POST to trigger copy trade (Run now button)" },
+    { message: "Use POST to trigger strategy run (Run now button)" },
     { status: 200 }
   );
 }
@@ -190,6 +190,8 @@ export async function POST() {
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,
       timestamp: Date.now(),
+      maxEdgeCentsSeen: result._maxEdgeCents,
+      minPairSumSeen: result._minPairSum,
     };
 
     const now = Date.now();
@@ -280,7 +282,7 @@ export async function POST() {
     });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
-    console.error("Copy trade error:", e);
+    console.error("Strategy run error:", e);
     return NextResponse.json({ ok: false, error: err }, { status: 500 });
   } finally {
     await releaseRunLock(lockToken).catch((e) => {
