@@ -68,7 +68,7 @@ function getRedis(): Redis | null {
   }
   if (!redis) {
     const effectiveRedisUrl = maybeUpgradeRedisUrl(REDIS_URL);
-    redis = new Redis(effectiveRedisUrl, {
+    const client = new Redis(effectiveRedisUrl, {
       maxRetriesPerRequest: 5,
       enableAutoPipelining: true,
       lazyConnect: false,
@@ -78,6 +78,11 @@ function getRedis(): Redis | null {
         return Math.min(times * 200, 2000);
       },
     });
+    client.on("error", () => {
+      // Prevent ioredis "Unhandled error event" noise; command paths
+      // handle fallback and structured logging via handleRedisFailure.
+    });
+    redis = client;
   }
   return redis;
 }
